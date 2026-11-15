@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block body_class %}app{% endblock %}
+{% block content %}
+<header class="hero" id="hero">
+  <button class="me-btn" id="meBtn" aria-label="Mijn instellingen">
+    <span class="net-dot" id="netDot" title="Verbinding"></span>
+    <span class="avatar sm" id="meAvatar">{{ me.nickname[:2] }}</span>
+  </button>
+  <div class="hero-row">
+    <img class="crest" src="/static/img/crest.jpg?v={{ v }}" alt="Speerpunt" width="92" height="111">
+    <div class="hero-text">
+      <div class="kicker" id="kicker">{{ s.kicker }}</div>
+      <h1 id="title">{{ s.title }}</h1>
+      <p class="sub" id="subtitle">{{ s.subtitle }}</p>
+    </div>
+  </div>
+</header>
+
+<div id="offlineBar" class="offline-bar" hidden>Geen bereik. Acties worden verstuurd zodra je weer online bent.</div>
+
+<main id="view" class="view">
+  <div class="loading">Kaart schudden…</div>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="card" class="active"><span class="ico">▦</span><span>Kaart</span><i class="badge" id="badgeCard" hidden></i></button>
+  <button data-tab="feed"><span class="ico">≋</span><span>Feed</span><i class="badge dot" id="badgeFeed" hidden></i></button>
+  <button data-tab="board"><span class="ico">♛</span><span>Stand</span></button>
+  <button data-tab="album"><span class="ico">◩</span><span>Album</span></button>
+  {% if me.is_admin == 1 %}<button data-tab="admin"><span class="ico">⚙</span><span>Admin</span></button>{% endif %}
+</nav>
+
+<div id="sheetWrap" class="sheet-wrap" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <section class="sheet" id="sheet" role="dialog" aria-modal="true"></section>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="bingoOverlay" class="bingo-overlay" hidden></div>
+<canvas id="confetti" class="confetti"></canvas>
+<div id="lightbox" class="lightbox" hidden><img alt=""></div>
+{% endblock %}
+{% block scripts %}
+<script>window.ME = {{ {"id": me.id, "nickname": me.nickname, "is_admin": me.is_admin == 1} | tojson }};</script>
+<script src="/static/app.js?v={{ v }}"></script>
+{% endblock %}

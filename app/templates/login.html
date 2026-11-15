@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block body_class %}auth{% endblock %}
+{% block content %}
+<header class="auth-hero">
+  <img class="crest" src="/static/img/crest.jpg?v={{ v }}" alt="Speerpunt">
+  <h1>{{ s.title }}</h1>
+  <div class="kicker">{{ s.kicker }}</div>
+</header>
+<main class="auth-box">
+  <form method="post" action="/login" class="panel">
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <label>E-mail
+      <input type="email" name="email" value="{{ email }}" autocomplete="email" inputmode="email" required>
+    </label>
+    <label>Wachtwoord
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn gold big" type="submit">Inloggen</button>
+  </form>
+  <p class="muted center">Nog geen account? <a href="/register">Vul hier je invite code in</a>.</p>
+  <p class="foot center">{{ s.footer }}</p>
+</main>
+{% endblock %}

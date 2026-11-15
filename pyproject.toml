@@ -1,0 +1,25 @@
+[project]
+name = "speerpunt-bingo"
+version = "0.1.0"
+description = "Speerpunt Bingo: drinking-game bingo for jaarclub Speerpunt"
+requires-python = ">=3.12"
+dependencies = [
+    "argon2-cffi>=25.1.0",
+    "fastapi>=0.163.1",
+    "jinja2>=3.1.6",
+    "pillow>=13.0.0",
+    "python-multipart>=0.0.33",
+    "pywebpush>=2.5.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

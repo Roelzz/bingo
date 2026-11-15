@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body_class %}auth{% endblock %}
+{% block content %}
+<header class="auth-hero">
+  <img class="crest" src="/static/img/crest.jpg?v={{ v }}" alt="Speerpunt">
+  <h1>{% if step == 2 %}Claim je account{% else %}Meedoen{% endif %}</h1>
+  <div class="kicker">{{ s.title }}</div>
+  {% if step == 2 %}
+    <p class="sub">De code is goed. Kies hoe je op de kaart staat.</p>
+  {% else %}
+    <p class="sub">Vul je invite code in. Die krijg je van de admin.</p>
+  {% endif %}
+</header>
+<main class="auth-box">
+  <form method="post" action="/register" class="panel">
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <label>Invite code
+      <input class="code-field" name="code" value="{{ code }}" placeholder="RAKI-7F3K"
+             autocapitalize="characters" autocomplete="one-time-code" spellcheck="false"
+             {% if step == 2 %}readonly{% else %}autofocus{% endif %} required>
+    </label>
+    {% if step == 2 %}
+      <div class="ok-note">✓ {{ code }} is een geldige code</div>
+      <label>Nickname
+        <input name="nickname" value="{{ nickname }}" maxlength="20" placeholder="Hoe heet je op de kaart?" autocomplete="nickname" required>
+      </label>
+      <label>E-mail
+        <input type="email" name="email" value="{{ email }}" autocomplete="email" inputmode="email" required>
+      </label>
+      <label>Wachtwoord <span class="muted" style="color:var(--muted)">(minstens 8 tekens)</span>
+        <input type="password" name="password" minlength="8" autocomplete="new-password" required>
+      </label>
+      <button class="btn gold big" type="submit">Account claimen</button>
+      <p class="muted center"><a href="/register">Andere code invoeren</a></p>
+    {% else %}
+      <button class="btn gold big" type="submit">Code checken</button>
+      <p class="muted center">De code van het evenement. Iedereen die hem heeft maakt ermee een eigen account.</p>
+    {% endif %}
+  </form>
+  <p class="muted center">Al een account? <a href="/login">Log in</a>.</p>
+  <p class="foot center">{{ s.footer }}</p>
+</main>
+{% endblock %}
