@@ -130,11 +130,24 @@ is; `state --json` geeft de volledige kaart + claims per speler.
 
 ## Deploy: wat er op de server staat (Coolify)
 
-Domain `bingo.speerpunt.roelschenk.com` behind Coolify's proxy: `COOKIE_SECURE=auto` is
+Project `speerpunt-bingo`, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving `production`, build pack Dockerfile,
+`ports_exposes 8000`, healthcheck `/healthz`. Domain `bingo.speerpunt.roelschenk.com`: `COOKIE_SECURE=auto` is
 correct there (Secure cookie over HTTPS; push + PWA install need HTTPS). Keep **one worker**
 (`uvicorn app.main:app --host 0.0.0.0 --port 8000`, no `--workers/--reload`) — the SSE feed
-and push state are in-process, and the SQLite DB + uploads + VAPID keys must live on the
-`/data` volume or a redeploy resets the game. `GET /healthz` is the probe the CLI uses.
+and push state are in-process, and the SQLite DB + uploads + VAPID keys must live on `/data`
+or a redeploy resets the game. Coolify's app API has no volume field, so persistence comes from
+`custom_docker_run_options: -v /data/speerpunt-bingo:/data` — check it is still set after cloning this app.
+
+```bash
+python3 ops/coolify/deploy.py show|deploy|wait|logs|envs|domains   # token: ~/.hermes/mcp-tokens/coolify.env (600)
+```
+
+Image needs `curl`: Coolify injects its own healthcheck inside the container (curl/wget), so on
+`python:slim` a deploy "fails" with *curl: not found* even though uvicorn started fine.
+Pushes do not auto-deploy (no webhook on the repo) — run `deploy.py deploy` after merging.
+Coolify runs Traefik, but this VPS has an extra openresty in front of it: that front layer decides
+which instance a domain reaches. If the domain still serves an old/other instance, the openresty
+upstream must point at Traefik; prove it by checking that the request shows up in `deploy.py logs`.
 
 ## Gotchas
 
@@ -148,5 +161,6 @@ and push state are in-process, and the SQLite DB + uploads + VAPID keys must liv
 - Photos arrive as data URLs on claim creation; `album` gives `/uploads/<stem>.jpg` and
   `<stem>_t.jpg` thumbnails — fetch with `download` or `album --out-dir`.
 - After a Coolify deploy the token cache is still valid (sessions live in the DB), unless
-  `DATA_DIR` wasn't on a volume — then the DB is empty and login fails with a fresh 401.
+  `DATA_DIR` wasn't on a volume — then the DB is empty and login fails with a fresh 401. The
+  Coolify prod DB started empty on 16 nov, dus daar is nog geen demo-data van de LAN-instantie.
 - Read `references/api.md` before using `raw` for anything not in the table above.
