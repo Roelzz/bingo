@@ -148,6 +148,7 @@ must show the *same* timestamp after two deploys; a fresh timestamp means the DB
 
 ```bash
 python3 ops/coolify/deploy.py show|deploy|wait|logs|envs|domains   # token: ~/.hermes/mcp-tokens/coolify.env (600)
+python3 ../nginx-proxy-manager/scripts/npm.py hosts               # NPM: upstreams, certs, SSE-aanpak
 ```
 
 Image needs `curl`: Coolify injects its own healthcheck inside the container (curl/wget), so on

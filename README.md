@@ -71,6 +71,10 @@ INFO: data: /data/bingo.db — 1 accounts, 1 admin(s), oudste account 2026-11-16
 Blijft "oudste account" tussen twee deploys gelijk, dan staat de mount goed. Komt er elke deploy
 een nieuw tijdstip, dan wordt de database gewoon opnieuw aangelegd.
 
+De Nginx Proxy Manager self is te besturen zonder UI met de skill in `ops/npm-skill/` (API via
+`https://npm.roelschenk.com`, ingelogd in `~/.hermes/mcp-tokens/npm.env`): `hosts`, `point`, `sse`,
+`certs`, `cert-add`. Zowel Pi (`~/.pi/agent/skills/nginx-proxy-manager`) als Hermes laden hem.
+
 Er draait hier **geen Traefik**, maar Nginx Proxy Manager. De app publiceert daarom een host-poort via
 `ports_mappings: 8091:8000` — in NPM wordt de upstream dus `<server-ip>:8091` (net als de andere apps: 8887, 6006, 2011…).
 De VPS-firewall laat die poorten van buiten niet binnen, dus alleen NPM komt erbij. Zet in NPM bij `/api/stream`
