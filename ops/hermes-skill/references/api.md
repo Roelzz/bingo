@@ -38,9 +38,10 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 | `POST /api/admin/prizes` | `{"r0":"Rakı","full":"..."}` (≤200) | empty string clears back to default; keys outside the current layout are ignored |
 | `POST /api/admin/invites` | `{"code":"ISTANBUL-2026"}` of `{"count":N}` 1–30 | eigen code: 3–24 tekens A-Z0-9- (kleine letters/spaties worden genegeerd, dubbel = 400). Zonder `code` worden woordcodes gegenereerd: RAKI, SIMIT, AYRAN, LOKUM, MEZE, DONER, KEBAP, CAY, BAKLAVA, BOSPHORUS + 4 tekens uit `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`. **Een code is herbruikbaar**: één per evenement |
 | `DELETE /api/admin/invites/{code}` | — | trekt de code in (case/spatie-insensitive), ook als hij gebruikt is; `users.invite_code` van bestaande accounts blijft staan → `{"ok":true,"removed":1}` |
+| `POST /api/admin/players/{id}/nickname` | `{"nickname":…}` | rename any user, other admins included; same rules as self-rename, 409 if taken, 404 if no such player |
 | `POST /api/admin/players/{id}/password` | `{"password":...}` ≥8 | also kills that player's sessions |
 | `POST /api/admin/players/{id}/reset` | — | deletes that player's claims + bingos, deals a fresh card |
-| `DELETE /api/admin/players/{id}` | — | refuses to delete yourself; pending claims they witnessed are cancelled |
+| `DELETE /api/admin/players/{id}` | — | deletes any other account, **admins included** (self-delete is refused, and the last admin can never go); pending claims they witnessed are cancelled, cards/claims/bingos/sessions cascade |
 | `POST /api/admin/claims/{id}/revoke` | — | admin override of any open claim |
 | `POST /api/admin/announce` | `{"text":...}` ≤300 | feed event + SSE broadcast + web push to all subscriptions |
 | `POST /api/admin/new-game` | — | wipes `vetoes`, `bingos`, `claims`, `events`, unfreezes, reshuffles all cards. Destructive |
@@ -52,6 +53,7 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 | `POST /api/claims` | `{"item_id":N,"witness_id":M,"note":str,"photo":"data:image/...;base64,...", "joker":bool}` | blocked when frozen (409). Item must be on your card and not already claimed. `joker:true` → instantly confirmed, needs `jokers_per_player` budget. Witness ≠ self, and `witness_limit` caps how often the same witness backs the same player. Photo ≤6 MB, EXIF/GPS stripped, resized to 1600 px + 420 px thumb |
 | `POST /api/claims/{id}/confirm` \| `/reject` | — | only the assigned witness, only while `pending` |
 | `POST /api/claims/{id}/cancel` | — | only the claimant, while pending |
+| `POST /api/profile/nickname` | `{"nickname":"…"}` | anyone may rename themselves: 2–20 chars, unique (NOCASE), no `<>&"'` → `{"ok":true,"nickname":…}`; logs a `renamed` event and SSE-refreshes everyone |
 | `POST /api/claims/{id}/veto` | — | needs `veto_threshold > 0`, claim must be `confirmed`, and you may not be claimant or witness. At threshold the claim becomes `vetoed` (counts as a penalty) |
 | `POST /api/push/subscribe` | `{"endpoint":"https://...","keys":{"p256dh":"...","auth":"..."}}` | registers this browser's push subscription |
 | `POST /api/push/test` | — | sends "Şerefe! 🍻" to the current user's devices |
@@ -67,3 +69,5 @@ records `users.invite_code` and the first use in `invites.used_at`/`used_by`. A 
 visitor at `/` lands on this wizard, not on the login page. Prefill with
 `GET /register?code=ISTANBUL-2026`. The admin row itself is created at boot from
 `ADMIN_EMAIL`/`ADMIN_PASSWORD` (`ADMIN_RESET_PASSWORD=1` forces the password once).
+`PRUNE_ADMINS=a@b.nl,c@d.nl` is a one-shot startup hatch: those **admin** accounts are deleted at boot
+(never `ADMIN_EMAIL`, never plain players) — for moving the admin on a host where you can't reach the DB.

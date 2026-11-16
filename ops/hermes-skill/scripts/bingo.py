@@ -459,24 +459,46 @@ def cmd_players(b: Bingo, args):
                           ("is_admin", "admin", 6), ("created_at", "geregistreerd", 26)]))
 
 
+def who_id(b: Bingo, ref: str) -> tuple[int, str]:
+    """Een speler opzoeken op id, nickname of e-mailadres (hoofdletters maken niet uit)."""
+    ref = str(ref).strip()
+    needle = ref.lower()
+    players = b.get("/api/admin")["players"]
+    hit = next((p for p in players if (ref.isdigit() and p["id"] == int(ref)) or
+                (not ref.isdigit() and (p["nickname"].lower() == needle or str(p.get("email", "")).lower() == needle))), None)
+    if not hit:
+        raise SystemExit(f"· geen speler met id, nickname of e-mail {ref} — zie 'players'")
+    return hit["id"], hit["nickname"]
+
+
+def cmd_player_name(b: Bingo, args):
+    pid, old = who_id(b, args.player)
+    b.post(f"/api/admin/players/{pid}/nickname", {"nickname": args.nickname})
+    print(f"· nickname van {old} → {args.nickname} (score en kaart blijven aan hetzelfde account)")
+
+
 def cmd_player_pass(b: Bingo, args):
+    pid, name = who_id(b, args.player)
     password = args.password or getpass.getpass("nieuw wachtwoord: ")
     if len(password) < 8:
         raise SystemExit("· minstens 8 tekens")
-    b.post(f"/api/admin/players/{args.id}/password", {"password": password})
-    print(f"· wachtwoord speler {args.id} veranderd (al hun sessies zijn uitgelogd)")
+    b.post(f"/api/admin/players/{pid}/password", {"password": password})
+    print(f"· wachtwoord van {name} (id {pid}) veranderd, hun sessies zijn uitgelogd")
 
 
 def cmd_player_reset(b: Bingo, args):
-    confirm(args, f"speler {args.id} resetten (claims + bingo's weg, nieuwe kaart)")
-    b.post(f"/api/admin/players/{args.id}/reset")
-    print(f"· speler {args.id}: claims en bingo's weg, verse kaart")
+    pid, name = who_id(b, args.player)
+    confirm(args, f"{name} resetten (claims + bingo's weg, nieuwe kaart)")
+    b.post(f"/api/admin/players/{pid}/reset")
+    print(f"· {name}: claims en bingo's weg, verse kaart")
 
 
 def cmd_player_del(b: Bingo, args):
-    confirm(args, f"speler {args.id} verwijderen")
-    b.call("DELETE", f"/api/admin/players/{args.id}")
-    print(f"· speler {args.id} verwijderd")
+    pid, name = who_id(b, args.player)
+    is_admin = next((p for p in b.get("/api/admin")["players"] if p["id"] == pid), {}).get("is_admin")
+    confirm(args, f"{name}{' (admin)' if is_admin else ''} verwijderen")
+    b.call("DELETE", f"/api/admin/players/{pid}")
+    print(f"· {name} uit de database (ook als admin; de laatste admin weigert de API)")
 
 
 def cmd_invites(b: Bingo, args):
@@ -662,13 +684,16 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("pairs", nargs="*")
 
     pl = add("players", cmd_players, "alle spelers")
+    pname = add("player-name", cmd_player_name, "nickname van iemand veranderen (id, nickname of e-mail)")
+    pname.add_argument("player")
+    pname.add_argument("nickname")
     pp = add("player-pass", cmd_player_pass, "wachtwoord van een speler zetten")
-    pp.add_argument("id", type=int)
+    pp.add_argument("player", help="id, nickname of e-mail")
     pp.add_argument("password", nargs="?")
     prst = add("player-reset", cmd_player_reset, "claims + bingo's van een speler weg, nieuwe kaart")
-    prst.add_argument("id", type=int)
-    pdel = add("player-del", cmd_player_del, "speler verwijderen")
-    pdel.add_argument("id", type=int)
+    prst.add_argument("player", help="id, nickname of e-mail")
+    pdel = add("player-del", cmd_player_del, "speler (of admin) verwijderen")
+    pdel.add_argument("player", help="id, nickname of e-mail")
 
     inv = add("invites", cmd_invites, "evenementcodes tonen / maken / intrekken")
     inv.add_argument("--new", type=int, help="N losse woordcodes maken")

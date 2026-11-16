@@ -544,6 +544,7 @@
       <div class="li">
         ${avatar(p.nickname, p.color, "sm")}
         <div class="grow"><b>${esc(p.nickname)}</b> ${p.is_admin ? `<span class="pill ok">admin</span>` : ""}<div class="small">${esc(p.email)}</div></div>
+        <button class="btn small ghost" data-act="nick" data-id="${p.id}" data-name="${esc(p.nickname)}">✏️</button>
         <button class="btn small ghost" data-act="pw" data-id="${p.id}" data-name="${esc(p.nickname)}">🔑</button>
         <button class="btn small ghost" data-act="reset-player" data-id="${p.id}" data-name="${esc(p.nickname)}">↺</button>
         ${p.id === ME.id ? "" : `<button class="btn small ghost" data-act="del-player" data-id="${p.id}" data-name="${esc(p.nickname)}">🗑</button>`}
@@ -735,6 +736,9 @@
     const perm = window.Notification ? Notification.permission : "unsupported";
     openSheet(`
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">${avatar(S.me.nickname, S.me.color, "lg")}<div><h3>${esc(S.me.nickname)}</h3><span class="muted">${S.me.is_admin ? "admin · " : ""}speler</span></div></div>
+      <div class="k">Je nickname</div>
+      <div class="btn-row"><input id="nickInput" maxlength="20" value="${esc(S.me.nickname)}"><button class="btn teal" data-act="nick-save">Wijzig</button></div>
+      <p class="muted">2 tot 20 tekens, uniek. Je score en kaarten blijven gewoon aan je account plakken.</p>
       <div class="k">Meldingen</div>
       ${pushOk ? `<div class="btn-row"><button class="btn teal" data-act="push-on">${perm === "granted" ? "🔔 Opnieuw koppelen" : "🔔 Meldingen aanzetten"}</button><button class="btn ghost" data-act="push-test">Test</button></div>`
         : `<p class="muted">${isIOS && !standalone ? "Op iPhone werken meldingen alleen als de app op je beginscherm staat. Zet hem er eerst op (zie hieronder) en open hem vanaf daar." : "Pushmeldingen werken alleen via HTTPS in een ondersteunde browser."}</p>`}
@@ -748,6 +752,11 @@
         if (e.type !== "click" || !act) return;
         if (act.dataset.act === "push-on") enablePush();
         if (act.dataset.act === "push-test") { try { await api("POST", "/api/push/test"); toast("Testmelding onderweg"); } catch (err) { toast(err.message, "err"); } }
+        if (act.dataset.act === "nick-save") {
+          const nick = (document.getElementById("nickInput").value || "").trim();
+          if (nick === S.me.nickname) { closeSheet(); return; }
+          try { await api("POST", "/api/profile/nickname", { nickname: nick }); toast("Nickname gewijzigd"); closeSheet(); scheduleLoad(0); } catch (err) { toast(err.message, "err"); }
+        }
       });
   }
 
@@ -876,6 +885,11 @@
         await api("POST", "/api/admin/settings", collectSettings(["default_line_prize", "full_card_prize"]));
         await api("POST", "/api/admin/prizes", prizes);
       }, "Prijzen opgeslagen 🏆");
+    }
+    if (act === "nick") {
+      const nn = prompt(`Nieuwe nickname voor ${el.dataset.name} (2-20 tekens):`, el.dataset.name);
+      if (!nn || nn.trim() === el.dataset.name) return;
+      return adminAction(() => api("POST", `/api/admin/players/${id}/nickname`, { nickname: nn.trim() }), "Nickname gewijzigd");
     }
     if (act === "pw") {
       const pw = prompt(`Nieuw wachtwoord voor ${el.dataset.name} (minstens 8 tekens):`);

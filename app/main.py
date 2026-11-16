@@ -5,6 +5,7 @@ import base64
 import binascii
 import io
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -19,8 +20,8 @@ from PIL import Image, ImageOps
 
 from . import config, game, push
 from .auth import (
-    COOKIE, admin_user, bootstrap_admin, create_session, current_user, hash_password, login_limiter,
-    new_invite_code, normalise_code, require_ajax, set_session_cookie, user_from_request, verify_password,
+    COOKIE, admin_user, bootstrap_admin, create_session, current_user, drop_user, hash_password, login_limiter,
+    new_invite_code, normalise_code, prune_admins, require_ajax, set_session_cookie, user_from_request, verify_password,
 )
 from .db import add_event, connect, get_db, init_db, now, setting_int, settings
 from .events import broker
@@ -41,6 +42,9 @@ async def lifespan(app: FastAPI):
     conn = connect()
     try:
         bootstrap_admin(conn)
+        removed_admins = prune_admins(conn, config.PRUNE_ADMINS)  # one-shot: legacy admin-accounts opruimen
+        if removed_admins:
+            logging.getLogger("bingo").warning("PRUNE_ADMINS: admin-accounts verwijderd: %s", ", ".join(removed_admins))
         game.rebuild_everything(conn, reshuffle=False)
         game.auto_grid(conn, protect=True)  # keep the grid optimal, without touching anybody's card
         conn.commit()
@@ -833,6 +837,42 @@ def admin_delete_invite(code: str, user=Depends(admin_user), conn: sqlite3.Conne
     return {"ok": True, "removed": cur.rowcount}
 
 
+@app.post("/api/profile/nickname", dependencies=[Depends(require_ajax)])
+def set_my_nickname(payload: dict = Body(...), user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Iedereen mag zijn eigen nickname kiezen, ook tussendoor."""
+    nickname = apply_nickname(conn, user["id"], str(payload.get("nickname", "")))
+    conn.commit()
+    refresh_all()
+    return {"ok": True, "nickname": nickname}
+
+
+@app.post("/api/admin/players/{player_id}/nickname", dependencies=[Depends(require_ajax)])
+def admin_set_nickname(player_id: int, payload: dict = Body(...), user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Admin hernoemt iemand (ook andere admins)."""
+    if conn.execute("SELECT 1 FROM users WHERE id = ?", (player_id,)).fetchone() is None:
+        raise HTTPException(404, "Speler niet gevonden.")
+    nickname = apply_nickname(conn, player_id, str(payload.get("nickname", "")))
+    conn.commit()
+    refresh_all()
+    return {"ok": True, "nickname": nickname}
+
+
+def apply_nickname(conn: sqlite3.Connection, user_id: int, nickname: str) -> str:
+    nickname = nickname.strip()
+    if not 2 <= len(nickname) <= 20:
+        raise HTTPException(400, "Nickname moet tussen 2 en 20 tekens zijn.")
+    if re.search(r"[<>&\"']", nickname):
+        raise HTTPException(400, "Zoiets mag niet als nickname.")
+    # de kolom is UNIQUE COLLATE NOCASE, dus hoofdletters doen er niet toe
+    if conn.execute("SELECT 1 FROM users WHERE nickname = ? AND id <> ?", (nickname, user_id)).fetchone():
+        raise HTTPException(409, "Die nickname is al bezet. Wees origineel.")
+    old = conn.execute("SELECT nickname FROM users WHERE id = ?", (user_id,)).fetchone()["nickname"]
+    conn.execute("UPDATE users SET nickname = ? WHERE id = ?", (nickname, user_id))
+    if old != nickname:
+        add_event(conn, "renamed", user_id, old=old, nickname=nickname)
+    return nickname
+
+
 @app.post("/api/admin/players/{player_id}/password", dependencies=[Depends(require_ajax)])
 def admin_set_password(player_id: int, payload: dict = Body(...), user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
     password = str(payload.get("password", ""))
@@ -858,8 +898,12 @@ def admin_reset_player(player_id: int, user=Depends(admin_user), conn: sqlite3.C
 def admin_delete_player(player_id: int, user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
     if player_id == user["id"]:
         raise HTTPException(400, "Jezelf verwijderen? Liever niet.")
-    conn.execute("UPDATE claims SET witness_id = NULL, status = 'cancelled' WHERE witness_id = ? AND status = 'pending'", (player_id,))
-    conn.execute("DELETE FROM users WHERE id = ?", (player_id,))
+    target = conn.execute("SELECT id, nickname, is_admin FROM users WHERE id = ?", (player_id,)).fetchone()
+    if target is None:
+        raise HTTPException(404, "Speler niet gevonden.")
+    if target["is_admin"] and conn.execute("SELECT COUNT(*) AS n FROM users WHERE is_admin = 1").fetchone()["n"] <= 1:
+        raise HTTPException(400, "Dat is de laatste admin. Maak eerst iemand anders admin.")
+    drop_user(conn, player_id)
     conn.commit()
     refresh_all()
     return {"ok": True}

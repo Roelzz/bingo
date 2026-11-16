@@ -48,7 +48,7 @@ Session token cache: `~/.hermes/mcp-tokens/bingo/<host>.json` (0600). Delete it 
 | --- | --- |
 | `health` · `whoami` · `doctor` | reachability, identity, full self-check |
 | `overview` · `state` · `board` · `feed --limit N` · `album [--out-dir DIR]` | read the game (leaderboard, events, photo claims; `--out-dir` also downloads the JPEGs) |
-| `players` · `player-pass ID [pw]` · `player-reset ID` · `player-del ID` | accounts (`--yes` for the last two) |
+| `players` · `player-name REF NIEUW` · `player-pass REF [pw]` · `player-reset REF` · `player-del REF` | accounts; REF = id, nickname of e-mail (`--yes` voor reset/del) |
 | `invites [--code CODE] [--new N] [--del-code CODE]` | evenementcodes: `--code ISTANBUL-2026` maakt één eigen code voor het hele weekend (`--new N` maakt losse woordcodes), `--del-code` trekt in. Codes zijn **herbruikbaar**: iedereen met de code maakt een eigen account |
 | `items` · `items-add "tekst" ...` / `--file vakjes.txt` / stdin · `item-set ID "tekst"` · `item-del ID` | the vakjes; adding fills empty card cells only |
 | `grid` · `grid-set C R` · `grid-auto on\|off` · `grid-optimize [--force]` | rooster; auto keeps it optimal for the item count without reshuffling cards. `grid-set` is bounded 2–6 × 2–8 (the API clamps silently otherwise) and turns `grid_auto` off |
@@ -68,6 +68,9 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
 ## Safety rules
 
 - `new-game`, `reshuffle`, `player-reset`, `player-del`, `item-del`, `revoke` need `--yes`.
+- Nicknames are editable by everyone (`player-name`, or the 👤 sheet in the app). Renaming keeps the card,
+  score and claims — it is display only. `player-del` now removes admin accounts too (never yourself, never
+  the last admin); on a host without DB access use `PRUNE_ADMINS=<emails>` in Coolify for one deploy.
   Never add `--yes` without an explicit go-ahead from Roel in this conversation — `new-game`
   wipes every claim, bingo and feed entry of a live jaarclub game.
 - `announce` is a broadcast to all phones; phrase it like something that should be shouted in a bar.

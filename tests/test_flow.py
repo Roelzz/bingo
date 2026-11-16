@@ -3,6 +3,7 @@
 import base64
 import io
 import os
+import sqlite3
 import tempfile
 
 _tmp = tempfile.mkdtemp()
@@ -12,7 +13,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from app import game  # noqa: E402
+from app import config, game  # noqa: E402
 from app.auth import login_limiter  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -46,6 +47,25 @@ def clients():
 def delete_player(admin, nickname: str) -> None:
     pid = next(p["id"] for p in admin.get("/api/admin", headers=H).json()["players"] if p["nickname"] == nickname)
     assert admin.delete(f"/api/admin/players/{pid}", headers=H).status_code == 200
+
+
+def register_admin(admin, nickname: str) -> tuple[int, str]:
+    """Speler aanmaken en tot admin maken (om admin-ops te kunnen testen)."""
+    code = admin.post("/api/admin/invites", json={"count": 1}, headers=H).json()["codes"][0]
+    email = f"{nickname.lower()}@test.nl"
+    r = TestClient(app).post(
+        "/register", data={"code": code, "email": email, "nickname": nickname, "password": "wachtwoord1"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    pid = next(p["id"] for p in admin.get("/api/admin", headers=H).json()["players"] if p["nickname"] == nickname)
+    with sqlite3.connect(config.DB_PATH) as c:
+        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (pid,))
+    return pid, email
+
+
+def nicknames(admin) -> set[str]:
+    return {p["nickname"] for p in admin.get("/api/admin", headers=H).json()["players"]}
 
 
 def ids(client):
@@ -434,3 +454,48 @@ def test_hand_setting_the_grid_steps_the_autoset_aside(clients):
     st = admin.get("/api/admin").json()
     assert (st["grid"]["cols"], st["grid"]["rows"]) == (2, 4)
     assert st["settings"]["grid_auto"] == "0"
+
+
+def test_everyone_can_change_their_nickname(clients):
+    admin, players = clients
+    kees = players["Kees"]
+    r = kees.post("/api/profile/nickname", json={"nickname": "Keesje"}, headers=H)
+    assert r.status_code == 200 and r.json()["nickname"] == "Keesje", r.text
+    assert "Keesje" in nicknames(admin) and "Kees" not in nicknames(admin)
+    # uniek, en hoofdletters doen er niet toe
+    assert kees.post("/api/profile/nickname", json={"nickname": "bart"}, headers=H).status_code == 409
+    assert kees.post("/api/profile/nickname", json={"nickname": "K"}, headers=H).status_code == 400
+    assert kees.post("/api/profile/nickname", json={"nickname": "<b>Bas</b>"}, headers=H).status_code == 400
+    # de admin mag iemand anders hernoemen
+    pid = next(p["id"] for p in admin.get("/api/admin", headers=H).json()["players"] if p["nickname"] == "Keesje")
+    assert admin.post(f"/api/admin/players/{pid}/nickname", json={"nickname": "Kees"}, headers=H).status_code == 200
+    assert "Kees" in nicknames(admin)
+    # en een admin mag zichzelf hernoemen
+    me = next(p["id"] for p in admin.get("/api/admin", headers=H).json()["players"] if p["email"] == "roel@test.nl")
+    assert admin.post(f"/api/admin/players/{me}/nickname", json={"nickname": "Baas"}, headers=H).status_code == 200
+    assert admin.post(f"/api/admin/players/{me}/nickname", json={"nickname": "Roel"}, headers=H).status_code == 200
+
+
+def test_admin_accounts_can_be_removed_but_yourself_never(clients):
+    admin, _ = clients
+    pid, _ = register_admin(admin, "Wilma")
+    assert admin.delete(f"/api/admin/players/{pid}", headers=H).status_code == 200
+    assert "Wilma" not in nicknames(admin)
+    me = next(p["id"] for p in admin.get("/api/admin", headers=H).json()["players"] if p["email"] == "roel@test.nl")
+    r = admin.delete(f"/api/admin/players/{me}", headers=H)
+    assert r.status_code == 400 and "Jezelf" in r.json()["detail"], r.text
+    assert admin.delete("/api/admin/players/999999", headers=H).status_code == 404
+
+
+def test_prune_admins_env_clears_legacy_admins(clients):
+    from app.auth import prune_admins
+
+    admin, _ = clients
+    pid, email = register_admin(admin, "Prunella")
+    with sqlite3.connect(config.DB_PATH) as c:
+        c.row_factory = sqlite3.Row
+        # de env-admin en gewone spelers blijven staan, de legacy admin gaat weg
+        assert prune_admins(c, "roel@test.nl, bart@test.nl, " + email.upper()) == [email]
+    players = admin.get("/api/admin", headers=H).json()["players"]
+    assert "Prunella" not in {p["nickname"] for p in players}
+    assert {"roel@test.nl", "bart@test.nl"} <= {p["email"] for p in players}

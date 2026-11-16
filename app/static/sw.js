@@ -1,5 +1,5 @@
 /* Service worker: offline shell, photo cache, push notifications. */
-const SHELL = "speerpunt-shell-v3";
+const SHELL = "speerpunt-shell-v4";
 const PHOTOS = "speerpunt-photos-v2";
 
 self.addEventListener("install", (event) => {

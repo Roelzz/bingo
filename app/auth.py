@@ -122,6 +122,28 @@ def bootstrap_admin(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def drop_user(conn: sqlite3.Connection, user_id: int) -> None:
+    """Account weg: open getuigenissen worden eerst afgezegd, de rest van de rijen cascadeert."""
+    conn.execute("UPDATE claims SET witness_id = NULL, status = 'cancelled' WHERE witness_id = ? AND status = 'pending'", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+def prune_admins(conn: sqlite3.Connection, spec: str) -> list[str]:
+    """Startup-hatch (PRUNE_ADMINS): legacy admin-accounts weggooiën, bijv. na een admin-wissel.
+    ADMIN_EMAIL zelf wordt nooit aangeraakt, en alleen admins worden verwijderd."""
+    removed: list[str] = []
+    for email in (e.strip().lower() for e in spec.split(",")):
+        if not email or email == config.ADMIN_EMAIL:
+            continue
+        row = conn.execute("SELECT id, is_admin FROM users WHERE email = ?", (email,)).fetchone()
+        if row and row["is_admin"]:
+            drop_user(conn, row["id"])
+            removed.append(email)
+    conn.commit()
+    return removed
+
+
 class RateLimiter:
     """Tiny in-memory limiter for login and registration attempts."""
 

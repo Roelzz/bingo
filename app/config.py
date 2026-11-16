@@ -12,6 +12,10 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme123")
 ADMIN_NICKNAME = os.environ.get("ADMIN_NICKNAME", "Admin").strip()
 # Set to 1 to overwrite the admin password from ADMIN_PASSWORD on startup.
 ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_RESET_PASSWORD", "0") == "1"
+# One-shot ops hatch: comma-separated e-mail addresses of stale admin accounts to delete at
+# startup (ADMIN_EMAIL itself is never touched). Meant for "the old admin must go" when you have
+# no shell at the database; clear it again after that deploy.
+PRUNE_ADMINS = os.environ.get("PRUNE_ADMINS", "")
 
 # "auto" sets the Secure flag when the request came in over HTTPS (also behind a proxy).
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "auto").lower()

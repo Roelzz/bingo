@@ -53,7 +53,7 @@ deployen en controleren vanaf de commandlijn.
 
 Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving
 `production`, domein `bingo.speerpunt.roelschenk.com`, env vars `ADMIN_EMAIL`, `ADMIN_PASSWORD` (letterlijk),
-`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30`, en opslag via
+`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet), en opslag via
 `custom_docker_run_options: -v /data/speerpunt-bingo:/data` (de API heeft geen veld voor volumes; zonder deze regel
 verdwijnt je SQLite-DB, je foto's én je VAPID-sleutels bij elke deploy).
 
@@ -110,6 +110,8 @@ docker exec <container> python -c "import sqlite3; s=sqlite3.connect('/data/tomb
 - **Spel bevriezen** aan het eind, zodat niemand om 04:00 nog snel zijn kaart volgooit.
 - **Nieuw spel** wist claims, bingo's en feed. Spelers en vakjes blijven.
 - Iemand zijn wachtwoord kwijt? **Spelers → 🔑**.
+- **Nickname**: iedereen kan die zelf wijzigen in het 👤-venster (2 tot 20 tekens, uniek, hoofdletters maken niet uit). Als admin hernoem je iemand anders met **Spelers → ✏️**. Score, kaart en claims blijven gewoon aan hetzelfde account plakken.
+- Oude admin weg? **Spelers → 🗑** mag nu ook admin-accounts verwijderen (het eigen account nooit, en de app houdt altijd minimaal één admin over). Staat de oude admin in een omgeving waar je niet bij de database kunt, zet dan eenmalig `PRUNE_ADMINS=oud@adres.nl` in Coolify en deploy; na die start de variabele weer leegmaken.
 
 ## Telefoon-installatie voor je vrienden
 
