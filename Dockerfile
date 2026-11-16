@@ -8,6 +8,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data
 
+# Coolify (en elke andere orchestrator) prikt de healthcheck in de container met
+# curl of wget; python:slim heeft geen van beide.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Dependencies first, so code changes don't reinstall everything.
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
