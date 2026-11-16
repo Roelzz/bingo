@@ -30,6 +30,7 @@ BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=BASE / "templates")
 STATIC_VERSION = secrets.token_hex(4)  # cache-buster per deploy
 templates.env.globals["v"] = STATIC_VERSION
+log = logging.getLogger("bingo")
 
 AVATAR_COLORS = ["#8e1f1f", "#a07a2c", "#2f4f3a", "#3b4a6b", "#6b3e5e", "#7a5230", "#40625f", "#5a2d2d", "#55603a", "#384048"]
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -44,7 +45,10 @@ async def lifespan(app: FastAPI):
         bootstrap_admin(conn)
         removed_admins = prune_admins(conn, config.PRUNE_ADMINS)  # one-shot: legacy admin-accounts opruimen
         if removed_admins:
-            logging.getLogger("bingo").warning("PRUNE_ADMINS: admin-accounts verwijderd: %s", ", ".join(removed_admins))
+            log.warning("PRUNE_ADMINS: admin-accounts verwijderd: %s", ", ".join(removed_admins))
+        stats = conn.execute("SELECT COUNT(*) AS n, SUM(is_admin) AS admins, MIN(created_at) AS oldest FROM users").fetchone()
+        log.info("data: %s — %d accounts, %d admin(s), oudste account %s, PRUNE_ADMINS=%s", config.DB_PATH, stats["n"],
+                 stats["admins"] or 0, stats["oldest"], config.PRUNE_ADMINS or "-")
         game.rebuild_everything(conn, reshuffle=False)
         game.auto_grid(conn, protect=True)  # keep the grid optimal, without touching anybody's card
         conn.commit()
