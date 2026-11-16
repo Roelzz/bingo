@@ -47,16 +47,35 @@ docker compose up --build
 
 ## Deployen in Coolify
 
-1. Zet de repo in Git (GitHub, Gitea, wat je hebt).
-2. Coolify: **New Resource → Application → je repo**, build pack **Dockerfile**.
-3. **Ports Exposes**: `8000`. Koppel je domein, Coolify regelt HTTPS.
-4. **Persistent Storage**: voeg een volume toe met mount path `/data`. Zonder volume ben je bij elke deploy alles kwijt.
-5. **Environment Variables**: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NICKNAME` (zie `.env.example`).
-6. Deploy. De healthcheck zit op `/healthz`.
+Deze repo is er klaar voor: `Dockerfile` (één uvicorn-worker, `--proxy-headers`, healthcheck op `/healthz`, `curl` in de image
+want Coolify prikt zijn healthcheck in de container), `docker-compose.yml` voor lokaal, en `ops/coolify/deploy.py` voor
+deployen en controleren vanaf de commandlijn.
 
-Kies je liever de Docker Compose build pack: haal dan de `ports:` regel uit `docker-compose.yml` en zet de env vars in Coolify.
+Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving
+`production`, domein `bingo.speerpunt.roelschenk.com`, env vars `ADMIN_EMAIL`, `ADMIN_PASSWORD` (letterlijk),
+`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30`, en opslag via
+`custom_docker_run_options: -v /data/speerpunt-bingo:/data` (de API heeft geen veld voor volumes; zonder deze regel
+verdwijnt je SQLite-DB, je foto's én je VAPID-sleutels bij elke deploy).
 
-Belangrijk: draai **één** container met **één** worker. De realtime feed staat in het geheugen; schaal je op, dan zien spelers elkaars updates niet meer direct.
+```bash
+python3 ops/coolify/deploy.py show      # status, domein, health
+python3 ops/coolify/deploy.py deploy    # nieuwe versie uit GitHub bouwen + wachten
+python3 ops/coolify/deploy.py logs      # laatste regels van de container
+python3 ops/coolify/deploy.py envs      # welke env-varnamen er staan (nooit de waarden)
+```
+
+De token staat in `~/.hermes/mcp-tokens/coolify.env` (`COOLIFY_URL`, `COOLIFY_TOKEN`, chmod 600). Auto-deploy op
+elke push naar `main` staat aan.
+
+Handmatig in de UI, als je dat fijner vindt: **New Resource → Application → repo**, build pack **Dockerfile**, **Ports
+Exposes** `8000`, domein erbij, env vars uit `.env.example`, en een **Persistent Storage** mount op `/data`.
+
+Belangrijk: draai **één** container met **één** worker. De realtime feed staat in het geheugen; schaal je op, dan zien
+spelers elkaars updates niet meer direct.
+
+Nog een valkuil: als er vóór Coolify nog een eigen nginx/openresty op je server zit (Coolify zelf draait Traefik), dan
+bepaalt *die* config welke instantie het domein krijgt. Controleer na een switch altijd even of het verzoek werkelijk in
+`deploy.py logs` verschijnt — anders wijst het domein nog naar de oude app.
 
 ## Raster automatisch optimaal
 
@@ -118,6 +137,7 @@ app/
 assets/        bronbestand van het embleem
 scripts/       make_assets.py
 ops/hermes-skill/  Hermes-skill (SKILL.md + CLI + API-referentie) voor adminwerk op afstand
+ops/coolify/       deploy.py: builds, status en logs via de Coolify-API
 tests/         end-to-end tests via de API
 ```
 
