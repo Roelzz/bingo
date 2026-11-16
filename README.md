@@ -57,6 +57,11 @@ Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c
 `custom_docker_run_options: -v /data/speerpunt-bingo:/data` (de API heeft geen veld voor volumes; zonder deze regel
 verdwijnt je SQLite-DB, je foto's én je VAPID-sleutels bij elke deploy).
 
+Er draait hier **geen Traefik**, maar Nginx Proxy Manager. De app publiceert daarom een host-poort via
+`ports_mappings: 8091:8000` — in NPM wordt de upstream dus `<server-ip>:8091` (net als de andere apps: 8887, 6006, 2011…).
+De VPS-firewall laat die poorten van buiten niet binnen, dus alleen NPM komt erbij. Zet in NPM bij `/api/stream`
+`proxy_buffering off` en een lange `proxy_read_timeout` (1 dag), anders sneuvelt de realtime feed na 60 seconden.
+
 ```bash
 python3 ops/coolify/deploy.py show      # status, domein, health
 python3 ops/coolify/deploy.py deploy    # nieuwe versie uit GitHub bouwen + wachten

@@ -145,9 +145,12 @@ python3 ops/coolify/deploy.py show|deploy|wait|logs|envs|domains   # token: ~/.h
 Image needs `curl`: Coolify injects its own healthcheck inside the container (curl/wget), so on
 `python:slim` a deploy "fails" with *curl: not found* even though uvicorn started fine.
 Pushes do not auto-deploy (no webhook on the repo) — run `deploy.py deploy` after merging.
-Coolify runs Traefik, but this VPS has an extra openresty in front of it: that front layer decides
-which instance a domain reaches. If the domain still serves an old/other instance, the openresty
-upstream must point at Traefik; prove it by checking that the request shows up in `deploy.py logs`.
+Front of this VPS is **Nginx Proxy Manager** (no Traefik in use), so the app publishes a host port
+through `ports_mappings: 8091:8000` — the NPM proxy host upstream must be `<server-ip>:8091` (same
+pattern as the other Coolify apps: 8887, 6006, 2011). Those ports are firewalled from the internet,
+only NPM reaches them. NPM needs `proxy_buffering off` + long `proxy_read_timeout` on `/api/stream`
+(SSE). Prove which instance answers by checking `deploy.py logs` for the request — if it is missing,
+the NPM proxy host still points at the old (LAN) instance.
 
 ## Gotchas
 
