@@ -71,3 +71,5 @@ visitor at `/` lands on this wizard, not on the login page. Prefill with
 `ADMIN_EMAIL`/`ADMIN_PASSWORD` (`ADMIN_RESET_PASSWORD=1` forces the password once).
 `PRUNE_ADMINS=a@b.nl,c@d.nl` is a one-shot startup hatch: those **admin** accounts are deleted at boot
 (never `ADMIN_EMAIL`, never plain players) — for moving the admin on a host where you can't reach the DB.
+The startup log prints `data: <db-pad> — N accounts, N admin(s), oudste account <ts>, PRUNE_ADMINS=<…>`,
+which is how you confirm a deploy kept its database (the same timestamp twice = the `/data` mount works).

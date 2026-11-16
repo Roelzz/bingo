@@ -53,9 +53,22 @@ deployen en controleren vanaf de commandlijn.
 
 Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving
 `production`, domein `bingo.speerpunt.roelschenk.com`, env vars `ADMIN_EMAIL`, `ADMIN_PASSWORD` (letterlijk),
-`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet), en opslag via
-`custom_docker_run_options: -v /data/speerpunt-bingo:/data` (de API heeft geen veld voor volumes; zonder deze regel
-verdwijnt je SQLite-DB, je foto's én je VAPID-sleutels bij elke deploy).
+`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet). Mijn token: `~/.hermes/mcp-tokens/coolify.env`.
+
+**Opslag is handwerk in de UI**: Coolify → app → **Persistent Storage → Add → Directory Mount**, source
+`/data/speerpunt-bingo`, destination `/data`, daarna opnieuw deployen. `custom_docker_run_options`
+met `-v …` wordt bij een Dockerfile-build **genegeerd**, en `POST /applications/{uuid}/storages`
+geeft op Coolify beta.462 een 404 — dus zonder die mount in de UI zijn je SQLite-DB, foto's en
+VAPID-sleutels na elke deploy weg.
+
+Controleer in de log (`python3 ops/coolify/deploy.py logs`) de opstartregel:
+
+```
+INFO: data: /data/bingo.db — 4 accounts, 1 admin(s), oudste account 2026-11-16T08:37:15+00:00, PRUNE_ADMINS=-
+```
+
+Blijft "oudste account" tussen twee deploys gelijk, dan staat de mount goed. Komt er elke deploy
+een nieuw tijdstip, dan wordt de database gewoon opnieuw aangelegd.
 
 Er draait hier **geen Traefik**, maar Nginx Proxy Manager. De app publiceert daarom een host-poort via
 `ports_mappings: 8091:8000` — in NPM wordt de upstream dus `<server-ip>:8091` (net als de andere apps: 8887, 6006, 2011…).
@@ -78,6 +91,13 @@ Exposes** `8000`, domein erbij, env vars uit `.env.example`, en een **Persistent
 
 Belangrijk: draai **één** container met **één** worker. De realtime feed staat in het geheugen; schaal je op, dan zien
 spelers elkaars updates niet meer direct.
+
+Valkuil bij verhuizen: de game-state zit in `data/bingo.db` en `data/uploads/`. Met de mount hierboven
+kopieer je ze naar de VPS en de app vindt ze meteen weer:
+
+```bash
+rsync -a data/ root@<vps-ip>:/data/speerpunt-bingo/
+```
 
 Nog een valkuil: als er vóór Coolify nog een eigen nginx/openresty op je server zit (Coolify zelf draait Traefik), dan
 bepaalt *die* config welke instantie het domein krijgt. Controleer na een switch altijd even of het verzoek werkelijk in
