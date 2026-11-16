@@ -64,8 +64,9 @@ python3 ops/coolify/deploy.py logs      # laatste regels van de container
 python3 ops/coolify/deploy.py envs      # welke env-varnamen er staan (nooit de waarden)
 ```
 
-De token staat in `~/.hermes/mcp-tokens/coolify.env` (`COOLIFY_URL`, `COOLIFY_TOKEN`, chmod 600). Auto-deploy op
-elke push naar `main` staat aan.
+De token staat in `~/.hermes/mcp-tokens/coolify.env` (`COOLIFY_URL`, `COOLIFY_TOKEN`, chmod 600). Elke push naar `main`
+deployt niet vanzelf (er hangt geen GitHub-webhook aan de repo): trek de nieuwe versie zelf met
+`python3 ops/coolify/deploy.py deploy`, of zet in Coolify een webhook/git-hook op de repo aan.
 
 Handmatig in de UI, als je dat fijner vindt: **New Resource → Application → repo**, build pack **Dockerfile**, **Ports
 Exposes** `8000`, domein erbij, env vars uit `.env.example`, en een **Persistent Storage** mount op `/data`.
