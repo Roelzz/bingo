@@ -9,6 +9,7 @@ import logging
 import re
 import secrets
 import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,6 +32,9 @@ templates = Jinja2Templates(directory=BASE / "templates")
 STATIC_VERSION = secrets.token_hex(4)  # cache-buster per deploy
 templates.env.globals["v"] = STATIC_VERSION
 log = logging.getLogger("bingo")
+if not logging.getLogger().handlers:  # uvicorn configureert alleen zijn eigen loggers
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s", stream=sys.stderr)
+    log.setLevel(logging.INFO)
 
 AVATAR_COLORS = ["#8e1f1f", "#a07a2c", "#2f4f3a", "#3b4a6b", "#6b3e5e", "#7a5230", "#40625f", "#5a2d2d", "#55603a", "#384048"]
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
