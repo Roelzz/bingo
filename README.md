@@ -53,20 +53,19 @@ deployen en controleren vanaf de commandlijn.
 
 Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving
 `production`, domein `bingo.speerpunt.roelschenk.com`, env vars `ADMIN_EMAIL`, `ADMIN_PASSWORD` (letterlijk),
-`ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet). Mijn token: `~/.hermes/mcp-tokens/coolify.env`.
+`ADMIN_NICKNAME` (hier `Roel`), `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet). Mijn token: `~/.hermes/mcp-tokens/coolify.env`.
 
 **Opslag staat hier sinds 16 november in de UI** (Coolify → app → **Persistent Storage → Add → Directory
-Mount**, source
-`/data/speerpunt-bingo`, destination `/data`, daarna deployen). Die mount is het enige wat werkt:
-`custom_docker_run_options` met `-v …` wordt bij een Dockerfile-build **genegeerd**, en
-`POST /applications/{uuid}/storages` (plus `volumes`, `storage`, `mounts`, …) geeft op Coolify beta.462
-overal 404 — er is dus geen API-roete. Zonder mount zijn je SQLite-DB, foto's en VAPID-sleutels na
-e elke deploy weg.
+Mount**, source `/data/speerpunt-bingo`, destination `/data`, daarna deployen). Die mount is het enige wat
+hier werkt: `custom_docker_run_options` met `-v …` wordt bij een Dockerfile-build **genegeerd**, en
+`POST /applications/{uuid}/storages` (ook `volumes`, `storage`, `mounts`, …) geeft op Coolify beta.462
+overal 404 — er is geen API-route voor. Zonder mount zijn je SQLite-DB, foto's en
+VAPID-sleutels na elke deploy weg.
 
 Controleer in de log (`python3 ops/coolify/deploy.py logs`) de opstartregel:
 
 ```
-INFO: data: /data/bingo.db — 4 accounts, 1 admin(s), oudste account 2026-11-16T08:37:15+00:00, PRUNE_ADMINS=-
+INFO: data: /data/bingo.db — 1 accounts, 1 admin(s), oudste account 2026-11-16T09:06:56+00:00, PRUNE_ADMINS=-
 ```
 
 Blijft "oudste account" tussen twee deploys gelijk, dan staat de mount goed. Komt er elke deploy
