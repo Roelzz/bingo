@@ -55,11 +55,13 @@ Wat er nu live staat (november 2026): project **speerpunt-bingo**, app-uuid `x0c
 `production`, domein `bingo.speerpunt.roelschenk.com`, env vars `ADMIN_EMAIL`, `ADMIN_PASSWORD` (letterlijk),
 `ADMIN_NICKNAME`, `ADMIN_RESET_PASSWORD=0`, `COOKIE_SECURE=auto`, `SESSION_DAYS=30` (plus eenmalig `PRUNE_ADMINS` als er een oude admin weg moet). Mijn token: `~/.hermes/mcp-tokens/coolify.env`.
 
-**Opslag is handwerk in de UI**: Coolify → app → **Persistent Storage → Add → Directory Mount**, source
-`/data/speerpunt-bingo`, destination `/data`, daarna opnieuw deployen. `custom_docker_run_options`
-met `-v …` wordt bij een Dockerfile-build **genegeerd**, en `POST /applications/{uuid}/storages`
-geeft op Coolify beta.462 een 404 — dus zonder die mount in de UI zijn je SQLite-DB, foto's en
-VAPID-sleutels na elke deploy weg.
+**Opslag staat hier sinds 16 november in de UI** (Coolify → app → **Persistent Storage → Add → Directory
+Mount**, source
+`/data/speerpunt-bingo`, destination `/data`, daarna deployen). Die mount is het enige wat werkt:
+`custom_docker_run_options` met `-v …` wordt bij een Dockerfile-build **genegeerd**, en
+`POST /applications/{uuid}/storages` (plus `volumes`, `storage`, `mounts`, …) geeft op Coolify beta.462
+overal 404 — er is dus geen API-roete. Zonder mount zijn je SQLite-DB, foto's en VAPID-sleutels na
+e elke deploy weg.
 
 Controleer in de log (`python3 ops/coolify/deploy.py logs`) de opstartregel:
 

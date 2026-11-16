@@ -138,8 +138,9 @@ Project `speerpunt-bingo`, app-uuid `x0c4c80g040o4gc4go8c8csw`, omgeving `produc
 correct there (Secure cookie over HTTPS; push + PWA install need HTTPS). Keep **one worker**
 (`uvicorn app.main:app --host 0.0.0.0 --port 8000`, no `--workers/--reload`) — the SSE feed
 and push state are in-process, and the SQLite DB + uploads + VAPID keys must live on `/data`
-or a redeploy resets the game. Persistence is **UI-only here**: Coolify → app → **Persistent Storage →
-Add → Directory Mount**, source `/data/speerpunt-bingo`, destination `/data`, then redeploy.
+or a redeploy resets the game. Persistence is **UI-only here** and it is **in place since 2026-11-16**: Coolify → app → **Persistent
+Storage → Directory Mount**, source `/data/speerpunt-bingo`, destination `/data` (verified: two deploys
+in a row keep `oudste account 2026-11-16T09:06:56`).
 `custom_docker_run_options` is **ignored** for Dockerfile build packs (it can look set and do nothing), and
 `POST /applications/{uuid}/storages` is 404 on Coolify beta.462.
 Verify with `deploy.py logs`: the startup line `data: /data/bingo.db — N accounts, …, oudste account <ts>`
