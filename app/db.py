@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
-    invite_code TEXT
+    invite_code TEXT,
+    jokers_bonus INTEGER NOT NULL DEFAULT 0,   -- jokers die de admin los gaf (individueel)
+    joker_awards INTEGER NOT NULL DEFAULT 0    -- jokers die iemand automatisch verdiende (N bevestigde claims)
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -128,7 +130,8 @@ DEFAULT_SETTINGS = {
     "line_diagonals": "1",
     "default_line_prize": "Een rondje van de rest",
     "full_card_prize": "Superprijs: de hele groep trakteert",
-    "jokers_per_player": "0",    # jokers zijn standaard uit; die verdien je individueel (hier zet de admin ze weer aan)
+    "jokers_per_player": "0",    # basis-jokers voor iedereen (0 = uit); individueel verdiende gaan erbovenop
+    "joker_earn_claims": "0",    # elke N bevestigde claims = 1 verdiende joker (0 = uit), max 3 automatisch p.p.
     "veto_threshold": "2",
     "witness_limit": "0",
     "frozen": "0",
@@ -222,6 +225,12 @@ def init_db() -> str | None:
         # migratie: bingos.prize is nieuw (prijzen kunnen veranderen, de win must blijven kloppen)
         if "prize" not in {r["name"] for r in conn.execute("PRAGMA table_info(bingos)")}:  # type: ignore[index]
             conn.execute("ALTER TABLE bingos ADD COLUMN prize TEXT")
+        # migratie: jokers die je individueel verdienen of krijgen (aparte kolom per persoon)
+        ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}  # type: ignore[index]
+        if "jokers_bonus" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN jokers_bonus INTEGER NOT NULL DEFAULT 0")
+        if "joker_awards" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN joker_awards INTEGER NOT NULL DEFAULT 0")
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
         if conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0:

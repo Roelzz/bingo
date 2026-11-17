@@ -156,6 +156,16 @@
   function avatar(name, color, cls = "") {
     return `<span class="avatar ${cls}" style="background:${esc(color || "#8e1f1f")}">${esc(initials(name))}</span>`;
   }
+  function jokerTip(j) {
+    if (!j) return "";
+    const delen = [];
+    if (j.base) delen.push(`${j.base} voor iedereen`);
+    if (j.awards) delen.push(`${j.awards} verdiend uit claims`);
+    if (j.bonus) delen.push(`${j.bonus} van de admin`);
+    if (j.used) delen.push(`${j.used} op`);
+    return delen.length ? delen.join(" · ") : "geen joker";
+  }
+
   function ago(iso) {
     const d = (Date.now() - Date.parse(iso)) / 1000;
     if (d < 45) return "zojuist";
@@ -402,7 +412,7 @@
       <div class="stats">
         <div class="stat"><b>${done}/${S.card.length}</b><span>vakjes</span></div>
         <div class="stat ${bingos ? "gold" : ""}"><b>${bingos}${S.full_card_won ? " 🏆" : ""}</b><span>bingo's</span></div>
-        <div class="stat"><b>${S.me.jokers_left ? "🃏".repeat(Math.min(3, S.me.jokers_left)) : "—"}</b><span>joker</span></div>
+        <div class="stat"><b title="${jokerTip(S.me.jokers)}">${S.me.jokers_left ? "🃏".repeat(Math.min(3, S.me.jokers_left)) : "—"}</b><span>joker</span></div>
       </div>
       <div class="grid ${st.cols >= 4 ? "dense" : ""}" style="grid-template-columns:repeat(${st.cols},1fr)">${cells}</div>
       <div class="section-title"><h2>Prijzen</h2><span class="aside">iedereen die hem haalt</span></div>
@@ -427,6 +437,9 @@
       case "claim_pending": return ["⏳", `${who} claimt ${item} · ${esc(e.witness)} moet bevestigen`];
       case "claim_confirmed": return ["✅", `${who}: ${item} · bevestigd door ${esc(e.witness)}`];
       case "claim_joker": return ["🃏", `${who} zet de joker in op ${item}`];
+      case "joker_earned": return ["🃏", `${who} verdient ${e.aantal > 1 ? `${e.aantal} jokers` : "een joker"} (${e.claims} claims, elke ${e.per}e is er één)`];
+      case "joker_granted": return ["🃏", `${esc(e.by)} geeft ${who} een joker`];
+      case "joker_revoked": return ["🃏", `${esc(e.by)} nam de joker van ${who} weer in`];
       case "claim_rejected": return ["🍺", `${who} claimde ${item}, maar ${esc(e.witness)} trapt er niet in. Strafslok!`];
       case "claim_vetoed": return ["🚩", `Weggestemd: ${who} met ${item}. Strafslok!`];
       case "claim_revoked": return ["↩️", `De admin draaide ${item} van ${who} terug`];
@@ -615,7 +628,9 @@
     const players = A.players.map((p) => `
       <div class="li">
         ${avatar(p.nickname, p.color, "sm")}
-        <div class="grow"><b>${esc(p.nickname)}</b> ${p.is_admin ? `<span class="pill ok">admin</span>` : ""}<div class="small">${esc(p.email)}</div></div>
+        <div class="grow"><b>${esc(p.nickname)}</b> ${p.is_admin ? `<span class="pill ok">admin</span>` : ""}${p.jokers && p.jokers.left ? `<span class="pill">🃏 ${p.jokers.left}</span>` : ""}<div class="small">${esc(p.email)}${p.jokers && (p.jokers.awards || p.jokers.bonus) ? ` · 🃏 ${p.jokers.awards} verdiend · ${p.jokers.bonus} cadeau` : ""}</div></div>
+        <button class="btn small ghost" data-act="joker-give" data-id="${p.id}" data-name="${esc(p.nickname)}" title="Geef een joker">🃏+</button>
+        <button class="btn small ghost" data-act="joker-take" data-id="${p.id}" data-name="${esc(p.nickname)}" title="Trek een joker in">🃏−</button>
         <button class="btn small ghost" data-act="nick" data-id="${p.id}" data-name="${esc(p.nickname)}">✏️</button>
         <button class="btn small ghost" data-act="pw" data-id="${p.id}" data-name="${esc(p.nickname)}">🔑</button>
         <button class="btn small ghost" data-act="reset-player" data-id="${p.id}" data-name="${esc(p.nickname)}">↺</button>
@@ -677,7 +692,8 @@
         ${chk("line_rows", "Horizontale rijen tellen")}
         ${chk("line_diagonals", "Diagonalen tellen")}
         ${chk("line_cols", "Verticale kolommen tellen")}
-        <div class="row2" style="margin-top:12px">${num("jokers_per_player", "Jokers per speler")}${num("veto_threshold", "Veto's nodig (0 = uit)")}</div>
+        <div class="row2" style="margin-top:12px">${num("jokers_per_player", "Jokers per speler (basis)")}${num("joker_earn_claims", "Claims per verdiende joker (0 = uit)")}</div>
+        ${num("veto_threshold", "Veto's nodig (0 = uit)")}
         ${num("witness_limit", "Max getuigenissen door dezelfde vriend (0 = onbeperkt)")}
         ${txt("kicker", "Bovenregel")}${txt("title", "Titel")}${txt("subtitle", "Ondertitel")}${txt("footer", "Voetregel")}
         <p class="small muted">Raster wijzigen of optimaliseren? Geclaimde vakjes blijven staan, de rest wordt bijgevuld. Kaarten worden nooit opnieuw geschud.</p>
@@ -1003,7 +1019,7 @@
     }
     if (act === "save-settings") {
       return adminAction(() => api("POST", "/api/admin/settings", collectSettings(
-        ["grid_cols", "grid_rows", "grid_auto", "line_rows", "line_cols", "line_diagonals", "jokers_per_player", "veto_threshold", "witness_limit", "kicker", "title", "subtitle", "footer"])), "Opgeslagen");
+        ["grid_cols", "grid_rows", "grid_auto", "line_rows", "line_cols", "line_diagonals", "jokers_per_player", "joker_earn_claims", "veto_threshold", "witness_limit", "kicker", "title", "subtitle", "footer"])), "Opgeslagen");
     }
     if (act === "save-prizes") {
       const prizes = {};
@@ -1022,6 +1038,11 @@
       const pw = prompt(`Nieuw wachtwoord voor ${el.dataset.name} (minstens 8 tekens):`);
       if (!pw) return;
       return adminAction(() => api("POST", `/api/admin/players/${id}/password`, { password: pw }), "Wachtwoord gezet");
+    }
+    if (act === "joker-give" || act === "joker-take") {
+      const amount = act === "joker-give" ? 1 : -1;
+      return adminAction(() => api("POST", `/api/admin/players/${id}/joker`, { amount }),
+                         amount > 0 ? "🃏 Joker gegeven" : "Joker ingetrokken");
     }
     if (act === "reset-player") {
       if (!confirm(`Kaart en claims van ${el.dataset.name} wissen?`)) return;

@@ -48,7 +48,8 @@ Session token cache: `~/.hermes/mcp-tokens/bingo/<host>.json` (0600). Delete it 
 | --- | --- |
 | `health` · `whoami` · `doctor` | reachability, identity, full self-check |
 | `overview` · `state` · `board` · `feed --limit N` · `album [--out-dir DIR]` | read the game (leaderboard, events, photo claims; `--out-dir` also downloads the JPEGs) |
-| `players` · `player-name REF NIEUW` · `player-pass REF [pw]` · `player-reset REF` · `player-del REF` | accounts; REF = id, nickname of e-mail (`--yes` voor reset/del) |
+| `players` · `player-name REF NIEUW` · `player-pass REF [pw]` · `player-reset REF` · `player-del REF` | accounts (REF = id, nickname of e-mail; `players` toont ook de jokers per persoon); `--yes` voor reset/del |
+| `joker REF geef|neem [aantal]` | jokers los geven / afnemen aan één persoon (`jokers_per_player` blijft de groepsbasis) |
 | `invites [--code CODE] [--new N] [--del-code CODE]` | evenementcodes: `--code ISTANBUL-2026` maakt één eigen code voor het hele weekend (`--new N` maakt losse woordcodes), `--del-code` trekt in. Codes zijn **herbruikbaar**: iedereen met de code maakt een eigen account |
 | `items` · `items-add "tekst" ...` / `--file vakjes.txt` / stdin · `item-set ID "tekst"` · `item-del ID` | the vakjes; adding fills empty card cells only |
 | `grid` · `grid-set C R` · `grid-auto on\|off` · `grid-optimize [--force]` | rooster; auto keeps it optimal for the item count without reshuffling cards. `grid-set` is bounded 2–6 × 2–8 (the API clamps silently otherwise) and turns `grid_auto` off |
@@ -90,8 +91,9 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   lines, leaderboard, feed, witness requests, `vapid_public_key`.
 - Public `/api/state` settings use **`cols`/`rows`** (ints), while admin settings use
   **`grid_cols`/`grid_rows`** (strings). Don't mix them up.
-- Settings keys + ranges: `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5 (standaard **0**: niemand
-  heeft meer een joker, die moet je verdienen of los krijgen),
+- Settings keys + ranges: `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5 (standaard **0**: de
+  groepsbasis is uit; een joker is iets individueels), `joker_earn_claims` 0–20 (standaard **0** = uit;
+  elke N bevestigde claims levert 1 joker op, automatisch max 3 p.p.),
   `veto_threshold` 0–20, `witness_limit` 0–50; text: `title`, `kicker`, `subtitle`, `footer`,
   `default_line_prize`, `full_card_prize`; bool: `line_rows`, `line_cols`, `line_diagonals`,
   `grid_auto`, `frozen`. Item text ≤160 chars, prize ≤200, announce ≤300, invites 1–30/run.
@@ -105,8 +107,10 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   `grid_auto` off until re-enabled.
 - Claims: a player claim needs a witness (not themselves, capped by `witness_limit`);
   `confirm`/`reject` only work for the witness — the admin can revoke with `revoke`.
-  `joker` claims are auto-confirmed and cost one of `jokers_per_player` (standaard 0: zonder dat de admin
-  die omzet is er geen joker in te zetten). A claim gains vetoes
+  `joker` claims are auto-confirmed and kosten een joker uit het persoonlijke budget: groepsbasis
+  `jokers_per_player` + verdiende (`joker_awards`, elke `joker_earn_claims` bevestigde claims = 1, max 3)
+  + losse gaven (`jokers_bonus`). Standaard is er niets; geef er een met
+  `joker <speler> geef` (of zet `joker_earn_claims=3` en laat ze zelf verdienen). A claim gains vetoes
   from other players; at `veto_threshold` it becomes `vetoed` (penalty for the claimant).
 - Deleting an item soft-deletes it (`active=0`) and revokes its open claims — history stays.
 - Inbreng (proposals): `proposals.kind` is `item` or `prize`, `line_key` only for prizes
@@ -132,6 +136,8 @@ python3 $B grid                                # laat het voorgestelde rooster z
 python3 $B prizes full="1 fles rakı" r0="small pakje"
 python3 $B invites --code ISTANBUL-2026          # één code voor het hele evenement + claimlink
 python3 $B settings jokers_per_player=1 veto_threshold=2 witness_limit=3
+python3 $B joker BigD geef                 # één joker los aan één persoon (neem = weer intrekken)
+python3 $B settings joker_earn_claims=3    # of laat iedereen ze zelf verdienen
 python3 $B overview
 ```
 

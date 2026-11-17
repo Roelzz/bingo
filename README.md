@@ -10,7 +10,10 @@ Stack: Python 3.12 met uv, FastAPI, SQLite, Server Sent Events, Web Push. Geen b
 - Iedereen krijgt een **eigen geschudde kaart**. Zijn er meer vakjes dan cellen, dan krijgt ieder een willekeurige selectie.
 - Tik een vakje aan, kies een **getuige**, voeg eventueel een foto en toelichting toe. De getuige krijgt een melding en bevestigt of wijst af.
 - **Afgewezen = strafslok**, publiek in de feed.
-- **Joker**: één vakje zonder getuige (aantal instelbaar).
+- **Joker**: één vakje zonder getuige. Standaard heeft niemand er een: je **verdient** ze met bevestigde
+  claims (instelling `joker_earn_claims`: elke N claims = 1 joker, automatisch max 3 per persoon) of de admin
+  geeft er een los (🃏+/🃏− naast een naam in Beheer, of `joker BigD geef`). De groepsbasis
+  `jokers_per_player` staat op 0; zet hem op 1 als iedereen weer een joker mag hebben.
 - **Veto**: zet twee anderen (instelbaar) een veto op een bevestigde claim, dan is hij weg. Getuige en claimer mogen niet meestemmen.
 - **Lijnen**: horizontale rijen en diagonalen (kolommen kun je aanzetten). Bij een 3×4 raster zijn er 4 diagonalen van 3 vakjes.
 - **Prijzen**: per lijn, en iedereen die een lijn haalt wint die prijs. Volle kaart is de superprijs.

@@ -764,3 +764,72 @@ def test_a_start_snapshots_the_db_and_prunes_the_history(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_SNAPSHOT_KEEP", 0)
     assert db.snapshot_db() is None                            # uit = niets doen, bestaande snapshots blijven
     assert len(list((tmp_path / "backups").glob("bingo-*.db"))) == 2
+
+
+def claim_as(clients, player, positions: list[int]) -> None:
+    """Claim cellen voor een speler, bevestigd door admin Roel als getuige."""
+    admin, _ = clients
+    pid = ids(player)[1]
+    by_pos = {c["pos"]: c for c in player.get("/api/state").json()["card"]}
+    for pos in positions:
+        cell = by_pos[pos]
+        if cell["status"] != "open":
+            continue
+        r = player.post("/api/claims", json={"item_id": cell["item_id"], "witness_id": pid["Roel"]}, headers=H)
+        assert r.status_code == 200, r.text
+        cid = admin.get("/api/state").json()["witness_requests"][0]["claim_id"]
+        assert admin.post(f"/api/claims/{cid}/confirm", headers=H).status_code == 200
+
+
+def test_a_joker_is_something_you_get_individually(clients):
+    """De groepsbasis staat uit; een joker is los te geven en in te trekken per persoon."""
+    admin, _ = clients
+    admin.post("/api/admin/settings", json={"jokers_per_player": 0, "joker_earn_claims": 0,
+                                            "witness_limit": 0, "frozen": False}, headers=H)
+    jaap = register_player(admin, "Jaap")
+    s, pid = ids(jaap)
+    assert s["me"]["jokers_left"] == 0
+    out = admin.post(f"/api/admin/players/{pid['Jaap']}/joker", json={"amount": 1}, headers=H).json()
+    assert out["left"] == 1 and out["bonus"] == 1
+    cel = next(c for c in jaap.get("/api/state").json()["card"] if c["status"] == "open")
+    assert jaap.post("/api/claims", json={"item_id": cel["item_id"], "joker": True}, headers=H).json()["status"] == "confirmed"
+    assert jaap.get("/api/state").json()["me"]["jokers_left"] == 0
+    out = admin.post(f"/api/admin/players/{pid['Jaap']}/joker", json={"amount": -1}, headers=H).json()
+    assert out["bonus"] == 0 and out["left"] == 0          # een verbruikte joker zakt niet onder 0
+    assert admin.post(f"/api/admin/players/{pid['Jaap']}/joker", json={"amount": 9}, headers=H).status_code == 400
+    feed = admin.get("/api/state").json()["feed"]
+    granted = [e for e in feed if e["kind"] == "joker_granted"]
+    assert granted and granted[-1]["by"] == "Roel" and granted[-1]["user"] == "Jaap"
+    assert any(e["kind"] == "joker_revoked" for e in feed)
+    # de admin-lijst laat per persoon zien wat er speelt
+    row = next(p for p in admin.get("/api/admin", headers=H).json()["players"] if p["nickname"] == "Jaap")
+    assert row["jokers"] == {"base": 0, "awards": 0, "bonus": 0, "used": 1, "left": 0}
+
+
+def test_a_joker_can_be_earned_with_claims(clients):
+    """joker_earn_claims: elke N bevestigde claims is één joker, automatisch, tot 3 per persoon."""
+    admin, _ = clients
+    admin.post("/api/admin/settings", json={"jokers_per_player": 0, "joker_earn_claims": 2,
+                                            "witness_limit": 0, "frozen": False}, headers=H)
+    anne = register_player(admin, "Anne")
+
+    def jokers() -> dict:
+        return anne.get("/api/state").json()["me"]["jokers"]
+
+    assert jokers()["awards"] == 0 and jokers()["left"] == 0
+    claim_as(clients, anne, [0])
+    assert jokers()["awards"] == 0                              # één claim is nog te weinig
+    claim_as(clients, anne, [1])
+    assert jokers()["awards"] == 1 and jokers()["left"] == 1
+    claim_as(clients, anne, [2, 3, 4])
+    assert jokers()["awards"] == 2                              # bij 4 claims de tweede
+    claim_as(clients, anne, [5])
+    assert jokers()["awards"] == 3                              # meer dan 3 automatisch hoeft niet
+    claim_as(clients, anne, [6])
+    assert jokers()["awards"] == 3
+    earned = [e for e in anne.get("/api/state").json()["feed"] if e["kind"] == "joker_earned"]
+    assert len(earned) == 3 and earned[-1]["per"] == 2
+    # een verdiende joker is echt te gebruiken
+    cel = next(c for c in anne.get("/api/state").json()["card"] if c["status"] == "open")
+    assert anne.post("/api/claims", json={"item_id": cel["item_id"], "joker": True}, headers=H).json()["status"] == "confirmed"
+    assert jokers()["left"] == 2 and jokers()["used"] == 1

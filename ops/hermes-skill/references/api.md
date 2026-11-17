@@ -13,7 +13,7 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 | Method + path | Returns |
 | --- | --- |
 | `GET /healthz` | `{"ok":true}` |
-| `GET /api/state` | player view: `me` (+`jokers_left`), `settings` (title/kicker/subtitle/footer/**cols**/**rows**/frozen/veto_threshold/witness_limit/full_card_prize), `card[]` (`pos`, `item_id`, `text`, `status` open/pending/confirmed, `claim{id,witness,joker,note,photo,created_at,vetoes}`), `lines[]` (`key,label,prize,won` — `prize` is the **snapshot** taken at win time for won lines, current offer for open ones), `players[]`, `witness_requests[]`, `witness_load`, `leaderboard[]` (`prizes[]{label,prize}` also snapshotted), `first_bingo_at`, `feed[]`, `proposals[]` (inbreng: `visible` + `adopted` + eigen `pending`), `feedback` (`open,premod,per_player,mine_open,pending`), `vapid_public_key` |
+| `GET /api/state` | player view: `me` (+`jokers_left`, +`jokers{base,awards,bonus,used,left}`), `settings` (title/kicker/subtitle/footer/**cols**/**rows**/frozen/veto_threshold/witness_limit/full_card_prize), `card[]` (`pos`, `item_id`, `text`, `status` open/pending/confirmed, `claim{id,witness,joker,note,photo,created_at,vetoes}`), `lines[]` (`key,label,prize,won` — `prize` is the **snapshot** taken at win time for won lines, current offer for open ones), `players[]`, `witness_requests[]`, `witness_load`, `leaderboard[]` (`prizes[]{label,prize}` also snapshotted), `first_bingo_at`, `feed[]`, `proposals[]` (inbreng: `visible` + `adopted` + eigen `pending`), `feedback` (`open,premod,per_player,mine_open,pending`), `vapid_public_key` |
 | `GET /api/album` | photo claims: `{full,thumb,text,nickname,color,at,status}` newest first |
 | `GET /uploads/<stem>.jpg` \| `<stem>_t.jpg` | photo bytes (session required) |
 | `GET /api/stream` | SSE: `refresh`, `bingo`, `announce`, `witness_request`, `confirmed`, `rejected`, `push-ish` events; 20 s ping comments |
@@ -22,14 +22,14 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 
 | Method + path | Returns |
 | --- | --- |
-| `GET /api/admin` | `settings` (all keys, `grid_cols`/`grid_rows` as **strings**), `cells`, `grid` (plan), `items[]` (`id,text,on_cards,confirmed`), `invites[]` (`code,created_at,used_at,used_by,used_by_name,uses`), `players[]` (`id,nickname,email,color,is_admin,created_at`), `lines[]` (`key,label,prize`), `claims[]` (pending+confirmed, last 200: `id,user,item,status,joker,witness,at`), `proposals[]` (all statuses, pending first: `id,kind,text,line_key,line,user_id,nickname,color,status,up,down,score,my_vote,at,can_vote,can_edit,adopted_ref`), `feedback` |
+| `GET /api/admin` | `settings` (all keys, `grid_cols`/`grid_rows` as **strings**), `cells`, `grid` (plan), `items[]` (`id,text,on_cards,confirmed`), `invites[]` (`code,created_at,used_at,used_by,used_by_name,uses`), `players[]` (`id,nickname,email,color,is_admin,created_at,jokers{base,awards,bonus,used,left}`), `lines[]` (`key,label,prize`), `claims[]` (pending+confirmed, last 200: `id,user,item,status,joker,witness,at`), `proposals[]` (all statuses, pending first: `id,kind,text,line_key,line,user_id,nickname,color,status,up,down,score,my_vote,at,can_vote,can_edit,adopted_ref`), `feedback` |
 | `GET /api/admin/grid` | `cols,rows,cells,items,spare_items,suggestion{cols,rows,cells},optimal,auto,min_cells_for_claims,would_lose[{player,line,label}]` |
 
 ## Admin writes
 
 | Method + path | Body | Notes |
 | --- | --- | --- |
-| `POST /api/admin/settings` | any of: `title`,`kicker`,`subtitle`,`footer`,`default_line_prize`,`full_card_prize` (str ≤200); `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5 (default 0), `veto_threshold` 0–20, `witness_limit` 0–50, `feedback_per_player` 0–10 (default 0 = geen limiet; clamped ints); `line_rows`,`line_cols`,`line_diagonals`,`grid_auto`,`frozen`,`feedback_open`,`feedback_premod` (bool) | unknown keys are ignored silently. Changing `grid_cols/rows/line_*` rebuilds cards **without** reshuffling. Changing grid while `grid_auto` is on flips `grid_auto` off. Toggling `frozen` posts an announcement in the feed. Response includes `grid` plan when autoset ran |
+| `POST /api/admin/settings` | any of: `title`,`kicker`,`subtitle`,`footer`,`default_line_prize`,`full_card_prize` (str ≤200); `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5 (default 0 = groepsbasis uit), `joker_earn_claims` 0–20 (default 0 = uit; elke N bevestigde claims levert 1 joker op, automatisch max 3 p.p.), `veto_threshold` 0–20, `witness_limit` 0–50, `feedback_per_player` 0–10 (default 0 = geen limiet; clamped ints); `line_rows`,`line_cols`,`line_diagonals`,`grid_auto`,`frozen`,`feedback_open`,`feedback_premod` (bool) | unknown keys are ignored silently. Changing `grid_cols/rows/line_*` rebuilds cards **without** reshuffling. Changing grid while `grid_auto` is on flips `grid_auto` off. Toggling `frozen` posts an announcement in the feed. Response includes `grid` plan when autoset ran |
 | `POST /api/admin/items` | `{"text":"regel per vakje"}` (each ≤160 chars) | adds items, fills empty cells only, then autoset if on. → `{"ok":true,"added":N,"grid":plan}` |
 | `PUT /api/admin/items/{id}` | `{"text":...}` | rename in place |
 | `DELETE /api/admin/items/{id}` | — | soft delete (`active=0`) + revokes open claims of that item |
@@ -41,6 +41,7 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 | `POST /api/admin/players/{id}/nickname` | `{"nickname":…}` | rename any user, other admins included; same rules as self-rename, 409 if taken, 404 if no such player |
 | `POST /api/admin/players/{id}/password` | `{"password":...}` ≥8 | also kills that player's sessions |
 | `POST /api/admin/players/{id}/reset` | — | deletes that player's claims + bingos, deals a fresh card |
+| `POST /api/admin/players/{id}/joker` | `{"amount": -5…5, ≠ 0}` | individueel een joker **geven** (+) of **innemen** (−). `jokers_per_player` blijft de groepsbasis; deze gift staat los (`jokers_bonus`, loopt niet onder 0). Feed-event `joker_granted` / `joker_revoked` met `by` = admin-nickname. Response: `{left, base, awards, bonus, used}`. Verdienversie: `maybe_earn_joker` bij elke bevestigde claim, event `joker_earned` (`claims`, `per`, `aantal`) |
 | `DELETE /api/admin/players/{id}` | — | deletes any other account, **admins included** (self-delete is refused, and the last admin can never go); pending claims they witnessed are cancelled, cards/claims/bingos/sessions cascade |
 | `POST /api/admin/claims/{id}/revoke` | — | admin override of any open claim
 | `POST /api/admin/feedback/{id}/approve` | — | inbreng vrijgeven: `pending → visible`, pas daarna feed-event `feedback_new` + SSE refresh. 400 als hij al behandeld is, `already:true` als hij al vrij was |
@@ -54,7 +55,7 @@ not "wrong password". Wrong credentials → `401` HTML page (not JSON).
 
 | Method + path | Body | Rules |
 | --- | --- | --- |
-| `POST /api/claims` | `{"item_id":N,"witness_id":M,"note":str,"photo":"data:image/...;base64,...", "joker":bool}` | blocked when frozen (409). Item must be on your card and not already claimed. `joker:true` → instantly confirmed, needs `jokers_per_player` budget (default 0 → niemand heeft er een, 409). Witness ≠ self, and `witness_limit` caps how often the same witness backs the same player. Photo ≤6 MB, EXIF/GPS stripped, resized to 1600 px + 420 px thumb |
+| `POST /api/claims` | `{"item_id":N,"witness_id":M,"note":str,"photo":"data:image/...;base64,...", "joker":bool}` | blocked when frozen (409). Item must be on your card and not already claimed. `joker:true` → instantly confirmed, heeft joker-budget nodig: `jokers_per_player` (groepsbasis, standaard 0) + `joker_awards` (verdiend: elke `joker_earn_claims` bevestigde claims, max 3) + `jokers_bonus` (losse gift van de admin), min wat al op is; 409 als er niets over is. Witness ≠ self, and `witness_limit` caps how often the same witness backs the same player. Photo ≤6 MB, EXIF/GPS stripped, resized to 1600 px + 420 px thumb |
 | `POST /api/claims/{id}/confirm` \| `/reject` | — | only the assigned witness, only while `pending` |
 | `POST /api/claims/{id}/cancel` | — | only the claimant, while pending |
 | `POST /api/profile/nickname` | `{"nickname":"…"}` | anyone may rename themselves: 2–20 chars, unique (NOCASE), no `<>&"'` → `{"ok":true,"nickname":…}`; logs a `renamed` event and SSE-refreshes everyone |

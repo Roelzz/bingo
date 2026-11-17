@@ -250,7 +250,9 @@ def cmd_overview(b: Bingo, args):
     print(f"=== {s['title']} ===")
     print(f"{s['kicker']} · {s['subtitle']}")
     print(("⚠ SPEL BEVROREN" if s["frozen"] == "1" else "spel staat open")
-          + f" · jokers {s['jokers_per_player']}/persoon · veto-drempel {s['veto_threshold']}"
+          + f" · jokers {s['jokers_per_player']}/persoon"
+          + (f" (elke {s['joker_earn_claims']} claims = 1, max 3 automatisch)" if s.get("joker_earn_claims", "0") != "0" else " (uit)")
+          + f" · veto-drempel {s['veto_threshold']}"
           + f" · getuigenlimiet {s['witness_limit']}")
     print(grid_line(adm["grid"]))
     directions = [n for n, k in (("rijen", "line_rows"), ("kolommen", "line_cols"), ("diagonalen", "line_diagonals"))
@@ -511,8 +513,16 @@ def cmd_players(b: Bingo, args):
     if args.json:
         print(json.dumps(players, indent=2, ensure_ascii=False))
         return
+    for p in players:
+        j = p.get("jokers") or {}
+        extra = ""
+        if j.get("awards"):
+            extra += f" +{j['awards']} verdiend"
+        if j.get("bonus"):
+            extra += f" +{j['bonus']} cadeau"
+        p["joker"] = f"{j.get('left', 0)}{extra}" + (f" ({j['used']} op)" if j.get("used") else "")
     print(table(players, [("id", "id", 4), ("nickname", "bijnaam", 18), ("email", "e-mail", 32),
-                          ("is_admin", "admin", 6), ("created_at", "geregistreerd", 26)]))
+                          ("is_admin", "admin", 6), ("joker", "🃏", 22), ("created_at", "geregistreerd", 26)]))
 
 
 def who_id(b: Bingo, ref: str) -> tuple[int, str]:
@@ -540,6 +550,14 @@ def cmd_player_pass(b: Bingo, args):
         raise SystemExit("· minstens 8 tekens")
     b.post(f"/api/admin/players/{pid}/password", {"password": password})
     print(f"· wachtwoord van {name} (id {pid}) veranderd, hun sessies zijn uitgelogd")
+
+
+def cmd_player_joker(b: Bingo, args):
+    pid, name = who_id(b, args.player)
+    amount = args.aantal if args.actie == "geef" else -args.aantal
+    j = b.post(f"/api/admin/players/{pid}/joker", {"amount": amount})
+    print(f"· {name}: {'een joker gekregen' if amount > 0 else 'joker afgenomen'} → "
+          f"{j['left']} over (basis {j['base']} + verdiend {j['awards']} + cadeau {j['bonus']} − op {j['used']})")
 
 
 def cmd_player_reset(b: Bingo, args):
@@ -765,6 +783,10 @@ def build_parser() -> argparse.ArgumentParser:
     prst.add_argument("player", help="id, nickname of e-mail")
     pdel = add("player-del", cmd_player_del, "speler (of admin) verwijderen")
     pdel.add_argument("player", help="id, nickname of e-mail")
+    pjk = add("joker", cmd_player_joker, "iemand een joker geven of afnemen (individueel)")
+    pjk.add_argument("player", help="id, nickname of e-mail")
+    pjk.add_argument("actie", choices=["geef", "neem"])
+    pjk.add_argument("aantal", type=int, nargs="?", default=1, help="hoeveel (standaard 1)")
 
     inv = add("invites", cmd_invites, "evenementcodes tonen / maken / intrekken")
     inv.add_argument("--new", type=int, help="N losse woordcodes maken")

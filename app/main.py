@@ -79,9 +79,45 @@ def player_dict(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "nickname": row["nickname"], "color": color_for(row["id"]), "is_admin": bool(row["is_admin"])}
 
 
-def jokers_left(conn: sqlite3.Connection, user_id: int, s: dict) -> int:
+JOKER_AUTO_MAX = 3  # automatisch te verdienen jokers per persoon; losse gaven gaan daar langs
+
+
+def joker_math(base: int, awards: int, bonus: int, used: int) -> dict:
+    """Rekenwerk achter een joker: de groepsbasis + wat iemand verdiende + een losse gift, min wat op is."""
+    return {"base": base, "awards": awards, "bonus": bonus, "used": used,
+            "left": max(0, base + awards + bonus - used)}
+
+
+def joker_counts(conn: sqlite3.Connection, user_id: int, s: dict) -> dict:
+    row = conn.execute("SELECT jokers_bonus, joker_awards FROM users WHERE id = ?", (user_id,)).fetchone()
     used = conn.execute("SELECT COUNT(*) FROM claims WHERE user_id = ? AND joker = 1", (user_id,)).fetchone()[0]
-    return max(0, setting_int(s, "jokers_per_player") - used)
+    return joker_math(setting_int(s, "jokers_per_player"), row["joker_awards"] if row else 0,
+                      row["jokers_bonus"] if row else 0, used)
+
+
+def jokers_left(conn: sqlite3.Connection, user_id: int, s: dict) -> int:
+    return joker_counts(conn, user_id, s)["left"]
+
+
+def maybe_earn_joker(conn: sqlite3.Connection, user_id: int, s: dict) -> bool:
+    """Elke N bevestigde claims (N = `joker_earn_claims`, 0 = uit) levert één joker op, tot JOKER_AUTO_MAX.
+    Wat eenmaal verdiend is blijft staan, ook als er later een claim wordt ingetrokken."""
+    per = setting_int(s, "joker_earn_claims")
+    if per <= 0:
+        return False
+    row = conn.execute("SELECT joker_awards FROM users WHERE id = ?", (user_id,)).fetchone()
+    awards = row["joker_awards"] if row else 0
+    if awards >= JOKER_AUTO_MAX:
+        return False
+    done = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE user_id = ? AND joker = 0 AND status = 'confirmed'", (user_id,)
+    ).fetchone()[0]
+    due = min(done // per, JOKER_AUTO_MAX)
+    if due <= awards:
+        return False
+    conn.execute("UPDATE users SET joker_awards = ? WHERE id = ?", (due, user_id))
+    add_event(conn, "joker_earned", user_id, claims=done, per=per, aantal=due - awards)
+    return True
 
 
 def nickname_of(conn: sqlite3.Connection, user_id: int | None) -> str:
@@ -406,7 +442,7 @@ def state(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
     first_ever = min((b["first_bingo_at"] for b in board if b["first_bingo_at"]), default=None)
 
     return {
-        "me": {**player_dict(user), "jokers_left": jokers_left(conn, me, s)},
+        "me": {**player_dict(user), "jokers_left": jokers_left(conn, me, s), "jokers": joker_counts(conn, me, s)},
         "settings": {
             "title": s["title"], "kicker": s["kicker"], "subtitle": s["subtitle"], "footer": s["footer"],
             "cols": cols, "rows": rows, "frozen": s["frozen"] == "1",
@@ -627,12 +663,13 @@ def confirm_claim(claim_id: int, bg: BackgroundTasks, user=Depends(current_user)
     claimant = nickname_of(conn, c["user_id"])
     add_event(conn, "claim_confirmed", c["user_id"], claim_id=claim_id, item=text, witness=user["nickname"])
     won = game.refresh_bingos(conn, c["user_id"], s)
+    joker_earned = maybe_earn_joker(conn, c["user_id"], s)
     conn.commit()
     broker.publish({"type": "confirmed", "witness": user["nickname"], "text": text}, to={c["user_id"]})
     refresh_all()
     bg.add_task(push.send, [c["user_id"]], "✅ Bevestigd!", f"{user['nickname']} bevestigt: “{text}”")
     announce_bingos(bg, claimant, won)
-    return {"ok": True}
+    return {"ok": True, "joker_earned": joker_earned}
 
 
 @app.post("/api/claims/{claim_id}/reject", dependencies=[Depends(require_ajax)])
@@ -845,6 +882,7 @@ ADMIN_TEXT_SETTINGS = {"title", "kicker", "subtitle", "footer", "default_line_pr
 ADMIN_INT_SETTINGS = {
     "grid_cols": (2, 6), "grid_rows": (2, 8), "jokers_per_player": (0, 5),
     "veto_threshold": (0, 20), "witness_limit": (0, 50), "feedback_per_player": (0, 10),
+    "joker_earn_claims": (0, 20),
 }
 ADMIN_BOOL_SETTINGS = {"line_rows", "line_cols", "line_diagonals", "grid_auto", "frozen",
                        "feedback_open", "feedback_premod"}
@@ -863,7 +901,10 @@ def admin_state(user=Depends(admin_user), conn: sqlite3.Connection = Depends(get
         "used_by_name": nickname_of(conn, r["used_by"]) if r["used_by"] else None,
         "uses": uses.get(r["code"], 0),
     } for r in conn.execute("SELECT * FROM invites ORDER BY created_at DESC")]
-    players = [{**player_dict(r), "email": r["email"], "created_at": r["created_at"]}
+    joker_used = {r[0]: r[1] for r in conn.execute("SELECT user_id, COUNT(*) FROM claims WHERE joker = 1 GROUP BY user_id")}
+    jbase = setting_int(s, "jokers_per_player")
+    players = [{**player_dict(r), "email": r["email"], "created_at": r["created_at"],
+                "jokers": joker_math(jbase, r["joker_awards"], r["jokers_bonus"], joker_used.get(r["id"], 0))}
                for r in conn.execute("SELECT * FROM users ORDER BY created_at")]
     custom = {r["line_key"]: r["prize"] for r in conn.execute("SELECT * FROM line_prizes")}
     claims = [
@@ -1181,6 +1222,27 @@ def admin_reset_player(player_id: int, user=Depends(admin_user), conn: sqlite3.C
     conn.commit()
     refresh_all()
     return {"ok": True}
+
+
+@app.post("/api/admin/players/{player_id}/joker", dependencies=[Depends(require_ajax)])
+def admin_joker(player_id: int, payload: dict = Body(...), user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Losse joker geven of innemen. `jokers_per_player` blijft de groepsbasis; dit is individueel."""
+    s = settings(conn)
+    row = conn.execute("SELECT nickname, jokers_bonus FROM users WHERE id = ?", (player_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Speler niet gevonden.")
+    try:
+        amount = int(payload.get("amount", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Met hoeveel?")
+    if amount == 0 or abs(amount) > 5:
+        raise HTTPException(400, "Tussen -5 en 5, maar niet 0.")
+    bonus = max(0, row["jokers_bonus"] + amount)
+    conn.execute("UPDATE users SET jokers_bonus = ? WHERE id = ?", (bonus, player_id))
+    add_event(conn, "joker_granted" if amount > 0 else "joker_revoked", player_id, by=user["nickname"], bonus=bonus)
+    conn.commit()
+    refresh_all()
+    return {"ok": True, "nickname": row["nickname"], **joker_counts(conn, player_id, s)}
 
 
 @app.delete("/api/admin/players/{player_id}", dependencies=[Depends(require_ajax)])
