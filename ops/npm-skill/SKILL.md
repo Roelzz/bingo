@@ -56,8 +56,13 @@ Global: `--json` (ruwe output), `--url`, `--otp CODE` (2FA), `--yes`.
 
 - **`locations` is een vervangende lijst**: een bestaande location verdwijnt als je de hele lijst
   opnieuw stuurt. `set --location` en `sse` doen dat samenvoegen voor je.
-- **`PUT` wil de volledige payload**; de CLI gebruikt `PATCH` (NPM ≥ 2.10) en valt automatisch
-  terug op een volledige `PUT`.
+- **`PUT` wil de volledige payload**; de CLI gebruikt `PATCH` en valt automatisch terug op een
+  volledige `PUT`. NPM 2.16 kent geen PATCH-route op proxy-hosts: die geeft **404** (geen 405),
+  dus de fallback herkent inmiddels ook 404.
+- **`GET /api/nginx/proxy-hosts?expand=ssl_certificate` geeft 500** (Internal Error) op deze NPM —
+  `hosts`, `find` en `doctor` vallen terug op de platte lijst, daarin is `certificate_id` gewoon te zien.
+- **Een `locations`-object mag `locations_advanced_config` niet bevatten** op NPM 2.16
+  (`400 data/locations/0 must NOT have additional properties`); alleen de vijf standaardvelden sturen.
 - **`certificate_id`**: `0` = geen cert, een getal = bestaand cert, `"new"` = Let's Encrypt bij het
   aanmaken. LE heeft een limiet van ~5 uitgiften per week per (wildcard)domein — bij een cap of
   fouten niet tien keer opnieuw proberen, eerst `certs` kijken.
@@ -78,13 +83,19 @@ Global: `--json` (ruwe output), `--url`, `--otp CODE` (2FA), `--yes`.
 Upstream van `bingo.speerpunt.roelschenk.com` naar de Coolify-container (host-poort 8091), met SSE
 
 ```bash
-python3 $N find bingo                       # id + huidige forward_host/opmerkingen bekijken
-python3 $N point <id> --host 145.53.228.134 --port 8091
-python3 $N sse <id> --stream /api/stream --body-size 12m
+python3 $N find bingo                       # id + huidige forward_host/opmerkingen bekijken (id 58)
+python3 $N point 58 --host 192.168.68.105 --port 8091
+python3 $N sse 58 --stream /api/stream --body-size 12m
 curl -s https://bingo.speerpunt.roelschenk.com/healthz          # {"ok":true}
 python3 ../bingo-admin/scripts/bingo.py doctor                  # en de spelerlijst moet de prod-DB tonen
 ```
 
+De upstream is **`192.168.68.105:8091`** (LAN-IP van de server waar NPM + Coolify draaien; publiek
+145.53.228.134). Niet `145.53.228.134:8091` proberen — hairpin-NAT vanaf het LAN daarvan werkt hier
+niet, de poort staat alleen voor NPM zelf open. Sinds 2026-11-16 staat host 58 op de Coolify-container;
+vergelijk met `curl -s http://192.168.68.105:8091/healthz` (Coolify) en `http://192.168.68.125:8000`
+(de LAN-instantie op Roel's desktop) — toen allebei draaiden gaven ze allebei `{"ok":true}`, dus alleen de
+containerlog wijst uit welke antwoordt (de LAN-instantie staat inmiddels uit): `deploy.py logs` toont NPM-requests als `145.53.228.134:0 - "GET /..."`.
 Controleer achteraf welke database antwoordt: de Coolify-instantie heeft alleen `roelschenk@gmail.com`
 als account, de LAN-instantie heeft de testspelers `Speler1..3`. Zie ook de `bingo-admin` skill
 (`ops/hermes-skill/SKILL.md`) voor de Coolify- en NPM-feiten van deze app.

@@ -162,7 +162,12 @@ class Npm:
     # -- hosts ----------------------------------------------------------
     def hosts(self) -> list[dict]:
         self.ensure()
-        return self.request("GET", "/api/nginx/proxy-hosts?expand=owner,access_list,ssl_certificate") or []
+        try:
+            return self.request("GET", "/api/nginx/proxy-hosts?expand=owner,access_list,ssl_certificate") or []
+        except SystemExit:
+            # expand=ssl_certificate geeft 500 zodra één host naar een verwijderd cert wijst;
+            # de platte lijst werkt dan nog en bevat certificate_id gewoon.
+            return self.request("GET", "/api/nginx/proxy-hosts") or []
 
     def host(self, host_id: int) -> dict:
         self.ensure()
@@ -172,8 +177,9 @@ class Npm:
         self.ensure()
         try:
             return self.request("PATCH", f"/api/nginx/proxy-hosts/{host_id}", body)
-        except SystemExit as err:      # oudere NPM zonder PATCH: volledige payload sturen
-            if "405" not in str(err) and "not allowed" not in str(err):
+        except SystemExit as err:      # NPM zonder PATCH (405, of 404 op de router): volledige payload sturen
+            text = str(err)
+            if "405" not in text and "not allowed" not in text and "404" not in text:
                 raise
             merged = self.host(host_id) | body
             return self.put(host_id, merged)
@@ -330,11 +336,16 @@ def cmd_sse(npm: Npm, args):
         body["advanced_config"] = body["advanced_config"] + joiner + SSE_CONFIG
     if args.stream:
         locs = [l for l in (cur.get("locations") or []) if l.get("path") != args.stream]
-        locs.append({"path": args.stream, "forward_host": cur["forward_host"], "forward_port": str(cur["forward_port"]),
-                     "forward_scheme": cur["forward_scheme"], "advanced_config": SSE_CONFIG,
-                     "locations_advanced_config": []})
+        # NPM 2.16 wijst een location met "locations_advanced_config" af (additional properties),
+        # dus alleen meesturen als er echt een gevorderde-config-id aan gekoppeld is.
+        loc: dict = {"path": args.stream, "forward_host": cur["forward_host"], "forward_port": str(cur["forward_port"]),
+                     "forward_scheme": cur["forward_scheme"], "advanced_config": SSE_CONFIG}
+        for l in (cur.get("locations") or []):
+            if l.get("path") == args.stream and l.get("locations_advanced_config"):
+                loc["locations_advanced_config"] = l["locations_advanced_config"]
+        locs.append(loc)
         body["locations"] = locs
-    if args.body_size:
+    if args.body_size and f"client_max_body_size {args.body_size};" not in body["advanced_config"]:
         body["advanced_config"] += f"\nclient_max_body_size {args.body_size};"
     after = npm.patch(host_id, body)
     print(f"· host {host_id}: SSE-aanpak erbij ({args.stream or 'host-niveau'})")
