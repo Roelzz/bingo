@@ -164,3 +164,5 @@ class RateLimiter:
 
 
 login_limiter = RateLimiter(attempts=10, window_s=300)
+# inbreng: spamrem per speler (niet per IP, want alles loopt door dezelfde proxy)
+feedback_limiter = RateLimiter(attempts=8, window_s=300)

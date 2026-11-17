@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import config
 
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS bingos (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     line_key TEXT NOT NULL,
     achieved_at TEXT NOT NULL,
+    prize TEXT,                        -- snapshot van de prijsteks op het moment van winnen
     PRIMARY KEY (user_id, line_key)
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -88,6 +90,28 @@ CREATE TABLE IF NOT EXISTS push_subs (
     p256dh TEXT NOT NULL,
     auth TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+-- inbreng: spelers (en de admin als poll) opperen vakjes of prijzen; de admin keurt vrij
+CREATE TABLE IF NOT EXISTS proposals (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,                  -- prize | item
+    text TEXT NOT NULL,
+    line_key TEXT,                       -- alleen bij prize: r0/c0/dr0/full/default
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+                                         -- pending (alleen admin) | visible (iedereen) | adopted | rejected
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    adopted_ref TEXT                     -- "item:12" of "prize:r0", voor de history
+);
+CREATE INDEX IF NOT EXISTS ix_proposals_status ON proposals(status, kind);
+CREATE TABLE IF NOT EXISTS proposal_votes (
+    proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    vote INTEGER NOT NULL,               -- +1 of -1 (rij met 0 = ingetrokken)
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (proposal_id, user_id)
 );
 """
 
@@ -108,6 +132,9 @@ DEFAULT_SETTINGS = {
     "veto_threshold": "2",
     "witness_limit": "0",
     "frozen": "0",
+    "feedback_open": "1",          # inbreng-inbox aan/uit
+    "feedback_premod": "1",        # eerst admin, na goedkeuring pas voor iedereen
+    "feedback_per_player": "2",    # max eigen inbrengen die open staan (0 = onbeperkt)
 }
 
 SEED_ITEMS = [
@@ -138,8 +165,53 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
+def snapshot_db(keep: int | None = None) -> str | None:
+    """Rolpend snapshot van de DB weg vóór dat migraties (of erger) langs komen.
+    De online backup-API van sqlite3 is veilig terwijl de app al verbindingen open heeft.
+    Luchtig: een mislukte snapshot mag een start nooit laten falen."""
+    keep = config.DB_SNAPSHOT_KEEP if keep is None else keep
+    if keep <= 0 or not config.DB_PATH.exists():
+        return None
+    backups = Path(config.BACKUP_DIR)
+    backups.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S.%f")
+    out = backups / f"bingo-{stamp}.db"
+    src = None
+    dst = None
+    try:
+        src = sqlite3.connect(config.DB_PATH, timeout=10)
+        dst = sqlite3.connect(out)
+        with dst:
+            src.backup(dst)
+    except (sqlite3.Error, OSError):
+        if out.exists():
+            out.unlink(missing_ok=True)
+        return f"MISLUKT: {out}"
+    finally:
+        for c in (src, dst):
+            if c is not None:
+                c.close()
+    prune_snapshots(keep)
+    return str(out)
+
+
+def prune_snapshots(keep: int) -> list[str]:
+    """Houd de `keep` nieuwste snapshots; noem wat weg is (namen sorteren op tijdstempel)."""
+    gone: list[str] = []
+    files = sorted(Path(config.BACKUP_DIR).glob("bingo-*.db"))
+    for old in files[:-keep] if keep else []:
+        try:
+            old.unlink()
+            gone.append(old.name)
+        except OSError:
+            pass
+    return gone
+
+
+def init_db() -> str | None:
+    """Schema + migraties + seed. Geeft het snapshot-return terug (pad of foutmelding)."""
     config.ensure_dirs()
+    snapshot = snapshot_db()
     conn = connect()
     try:
         conn.execute("PRAGMA journal_mode = WAL")
@@ -147,6 +219,9 @@ def init_db() -> None:
         # migratie: users.invite_code is nieuw (codes zijn nu herbruikbaar per evenement)
         if "invite_code" not in {r["name"] for r in conn.execute("PRAGMA table_info(users)")}:  # type: ignore[index]
             conn.execute("ALTER TABLE users ADD COLUMN invite_code TEXT")
+        # migratie: bingos.prize is nieuw (prijzen kunnen veranderen, de win must blijven kloppen)
+        if "prize" not in {r["name"] for r in conn.execute("PRAGMA table_info(bingos)")}:  # type: ignore[index]
+            conn.execute("ALTER TABLE bingos ADD COLUMN prize TEXT")
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
         if conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0:
@@ -157,6 +232,7 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+    return snapshot
 
 
 def get_db():

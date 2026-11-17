@@ -450,6 +450,56 @@ def cmd_prizes(b: Bingo, args):
     print("· prijzen opgeslagen (lege tekst = terug naar standaard)")
 
 
+def cmd_feedback(b: Bingo, args):
+    adm = b.get("/api/admin")
+    rows = adm.get("proposals", [])
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        print("· geen inbreng binnen")
+        return
+    print(table(rows, [("id", "id", 4), ("status", "status", 9), ("kind", "soort", 6), ("score", "score", 5),
+                       ("nickname", "maker", 16), ("line_key", "lijn", 7), ("text", "tekst", 56)]))
+    st = adm["settings"]
+    wait = sum(1 for r in rows if r["status"] == "pending")
+    print(f"· {wait} te wachten · inbox {'open' if st.get('feedback_open') == '1' else 'dicht'}"
+          f" · eerst-goedkeuren {'aan' if st.get('feedback_premod') == '1' else 'uit'}"
+          f" · max {st.get('feedback_per_player')} open per speler (0 = vrij)")
+    print("· freengeven: feedback-approve <id> · aannemen: feedback-adopt <id> · afkeuren: feedback-reject <id>")
+
+
+def cmd_feedback_add(b: Bingo, args):
+    """Admin-poll: zelf een suggestie in de inbox leggen (die is meteen vrij)."""
+    body = {"kind": args.kind, "text": args.text}
+    if args.kind == "prize":
+        body["line_key"] = args.line
+    out = b.post("/api/feedback", body)
+    print(f"· inbreng {out['id']} staat er ({out['status']})")
+
+
+def _fb_action(path, msg):
+    def run(b: Bingo, args):
+        out = b.post(f"/api/admin/feedback/{args.id}/{path}")
+        if out.get("already"):
+            print(f"· inbreng {args.id} was al zo behandeld")
+            return
+        print(f"· {msg.format(id=args.id)}")
+    return run
+
+
+def cmd_feedback_adopt(b: Bingo, args):
+    out = b.post(f"/api/admin/feedback/{args.id}/adopt")
+    if out.get("already"):
+        print(f"· inbreng {args.id} was al aangenomen")
+        return
+    print(f"· inbreng {args.id} aangenomen als {out.get('ref')}")
+    if out.get("grid"):
+        plan = out["grid"]
+        print(grid_line(plan))
+        if plan.get("applied") is False and plan.get("reason"):
+            print(f"· let op: {plan['reason']} — het vakje staat nog nergens; kies handmatig een groter rooster")
+
 def cmd_players(b: Bingo, args):
     players = b.get("/api/admin")["players"]
     if args.json:
@@ -682,6 +732,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = add("prizes", cmd_prizes, "prijzen tonen of zetten: lijn=tekst ...")
     pr.add_argument("pairs", nargs="*")
+
+    fb = add("feedback", cmd_feedback, "inbreng-inbox: vakjes en prijzen die de club oppert")
+    fba = add("feedback-add", cmd_feedback_add, "zelf een inbreng opperen (prijs of vakje) — meteen vrij")
+    fba.add_argument("text")
+    fba.add_argument("--kind", choices=["item", "prize"], default="item")
+    fba.add_argument("--line", default="default", help=f"lijn voor een prijs: {LINE_KEYS_HELP} of default")
+    for name, path, msg in (
+        ("feedback-approve", "approve", "inbreng {id} vrijgegeven aan de club"),
+        ("feedback-reject", "reject", "inbreng {id} afgekeurd"),
+        ("feedback-reopen", "reopen", "inbreng {id} staat weer in de wacht"),
+    ):
+        fbc = add(name, _fb_action(path, msg), f"inbreng {path}")
+        fbc.add_argument("id", type=int)
+    fbd = add("feedback-adopt", cmd_feedback_adopt, "inbreng letterlijk waar maken: vakje of prijs")
+    fbd.add_argument("id", type=int)
 
     pl = add("players", cmd_players, "alle spelers")
     pname = add("player-name", cmd_player_name, "nickname van iemand veranderen (id, nickname of e-mail)")

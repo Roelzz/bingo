@@ -21,8 +21,9 @@ from PIL import Image, ImageOps
 
 from . import config, game, push
 from .auth import (
-    COOKIE, admin_user, bootstrap_admin, create_session, current_user, drop_user, hash_password, login_limiter,
-    new_invite_code, normalise_code, prune_admins, require_ajax, set_session_cookie, user_from_request, verify_password,
+    COOKIE, admin_user, bootstrap_admin, create_session, current_user, drop_user, feedback_limiter, hash_password,
+    login_limiter, new_invite_code, normalise_code, prune_admins, require_ajax, set_session_cookie, user_from_request,
+    verify_password,
 )
 from .db import add_event, connect, get_db, init_db, now, setting_int, settings
 from .events import broker
@@ -42,7 +43,9 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    snapshot = init_db()
+    if snapshot:
+        log.info("db-snapshot: %s", snapshot)
     push.init_vapid()
     conn = connect()
     try:
@@ -349,9 +352,19 @@ def state(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
         })
 
     prize_map = game.prizes(conn, s)
-    my_bingos = {r[0]: r[1] for r in conn.execute("SELECT line_key, achieved_at FROM bingos WHERE user_id = ?", (me,))}
+    my_bingos = {r["line_key"]: r for r in conn.execute(
+        "SELECT line_key, achieved_at, prize FROM bingos WHERE user_id = ?", (me,))}
+
+    def prize_for(key: str) -> str:
+        """Een gewonnen lijn toont de prijs zoals die op het moment van winnen stond; een nog open
+        lijn toont het huidige aanbod (prijzen veranderen immers via de inbreng)."""
+        row = my_bingos.get(key)
+        if row and row["prize"]:
+            return row["prize"]
+        return prize_map.get(key, "")
+
     line_list = [
-        {**line, "prize": prize_map.get(line["key"], ""), "won": line["key"] in my_bingos}
+        {**line, "prize": prize_for(line["key"]), "won": line["key"] in my_bingos}
         for line in game.lines(s)
     ]
 
@@ -372,7 +385,8 @@ def state(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
     board = []
     for p in players:
         pid = p["id"]
-        bingos = conn.execute("SELECT line_key, achieved_at FROM bingos WHERE user_id = ? ORDER BY achieved_at", (pid,)).fetchall()
+        bingos = conn.execute("SELECT line_key, achieved_at, prize FROM bingos WHERE user_id = ? ORDER BY achieved_at",
+                              (pid,)).fetchall()
         confirmed = conn.execute("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status = 'confirmed'", (pid,)).fetchone()[0]
         penalties = conn.execute("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status IN ('rejected','vetoed')", (pid,)).fetchone()[0]
         confirmations = conn.execute("SELECT COUNT(*) FROM claims WHERE witness_id = ? AND status = 'confirmed'", (pid,)).fetchone()[0]
@@ -385,7 +399,8 @@ def state(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
             "penalties": penalties,
             "witnessed": confirmations,
             "first_bingo_at": bingos[0]["achieved_at"] if bingos else None,
-            "prizes": [{"label": game.line_label(s, b["line_key"]), "prize": prize_map.get(b["line_key"], "")} for b in bingos],
+            "prizes": [{"label": game.line_label(s, b["line_key"]),
+                        "prize": b["prize"] if b["prize"] else prize_map.get(b["line_key"], "")} for b in bingos],
         })
     board.sort(key=lambda b: (-int(b["full"]), -b["bingos"], -b["cells"], b["first_bingo_at"] or "9999"))
     first_ever = min((b["first_bingo_at"] for b in board if b["first_bingo_at"]), default=None)
@@ -407,6 +422,8 @@ def state(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
         "leaderboard": board,
         "first_bingo_at": first_ever,
         "feed": feed(conn, me, nick, items, veto_counts),
+        "proposals": proposal_rows(conn, me),
+        "feedback": feedback_meta(conn, s, me, bool(user["is_admin"])),
         "vapid_public_key": push.public_key(),
     }
 
@@ -446,6 +463,81 @@ def album(user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)
     ).fetchall()
     return [{**photo_urls(r["photo"]), "text": r["text"], "nickname": r["nickname"], "color": color_for(r["uid"]),
              "at": r["created_at"], "status": r["status"]} for r in rows]
+
+
+# ---------------------------------------------------------------- inbreng (vakjes en prijzen)
+
+PROPOSAL_KINDS = {"item", "prize"}
+PROPOSAL_TEXT_MAX = 160                     # zelfde limiet als een vakje
+PRIZE_EXTRA_LINES = {"full": "Volle kaart", "default": "Elke lijn"}
+
+
+def line_labels(conn: sqlite3.Connection, s: dict[str, str]) -> dict[str, str]:
+    labels = {l["key"]: l["label"] for l in game.lines(s)}
+    labels.update(PRIZE_EXTRA_LINES)
+    return labels
+
+
+def load_proposal(conn: sqlite3.Connection, proposal_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Inbreng niet gevonden")
+    return row
+
+
+def proposal_rows(conn: sqlite3.Connection, me: int, *, admin: bool = False, limit: int = 80) -> list[dict]:
+    """Rijen voor de Inbreng-lijst. Een speler ziet wat vrijgegeven is plus zijn eigen
+    wacht-op-goedkeuring-rijen; de admin ziet alles, met de wachtrij bovenaan."""
+    s = settings(conn)
+    if admin:
+        rows = conn.execute(
+            """SELECT p.*, u.nickname FROM proposals p JOIN users u ON u.id = p.user_id
+               ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END, p.id DESC LIMIT ?""", (limit,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT p.*, u.nickname FROM proposals p JOIN users u ON u.id = p.user_id
+               WHERE p.status IN ('visible','adopted') OR (p.user_id = ? AND p.status = 'pending')
+               ORDER BY p.id DESC LIMIT ?""", (me, limit)
+        ).fetchall()
+    if not rows:
+        return []
+    ids = [r["id"] for r in rows]
+    marks = ",".join("?" * len(ids))
+    tally = {r["proposal_id"]: (r["up"], r["down"]) for r in conn.execute(
+        f"SELECT proposal_id, SUM(vote = 1) AS up, SUM(vote = -1) AS down FROM proposal_votes"
+        f" WHERE proposal_id IN ({marks}) GROUP BY proposal_id", ids)}
+    mine = {r["proposal_id"]: r["vote"] for r in conn.execute(
+        f"SELECT proposal_id, vote FROM proposal_votes WHERE proposal_id IN ({marks}) AND user_id = ?", [*ids, me])}
+    labels = line_labels(conn, s)
+    out = []
+    for r in rows:
+        up, down = tally.get(r["id"], (0, 0))
+        out.append({
+            "id": r["id"], "kind": r["kind"], "text": r["text"], "line_key": r["line_key"],
+            "line": labels.get(r["line_key"], "") if r["line_key"] else "",
+            "user_id": r["user_id"], "nickname": r["nickname"], "color": color_for(r["user_id"]),
+            "status": r["status"], "up": up, "down": down, "score": up - down,
+            "my_vote": mine.get(r["id"], 0), "at": r["created_at"],
+            "can_vote": r["status"] == "visible",
+            "can_edit": r["user_id"] == me and r["status"] in ("pending", "visible"),
+            "adopted_ref": r["adopted_ref"],
+        })
+    return out
+
+
+def feedback_meta(conn: sqlite3.Connection, s: dict[str, str], me: int, is_admin: bool) -> dict:
+    open_mine = conn.execute(
+        "SELECT COUNT(*) FROM proposals WHERE user_id = ? AND status IN ('pending','visible')", (me,)
+    ).fetchone()[0]
+    pending = conn.execute("SELECT COUNT(*) FROM proposals WHERE status = 'pending'").fetchone()[0] if is_admin else 0
+    return {
+        "open": s.get("feedback_open", "1") == "1",
+        "premod": s.get("feedback_premod", "1") == "1",
+        "per_player": setting_int(s, "feedback_per_player"),
+        "mine_open": open_mine,
+        "pending": pending,
+    }
 
 
 # ---------------------------------------------------------------- claims
@@ -597,6 +689,99 @@ def veto_claim(claim_id: int, bg: BackgroundTasks, user=Depends(current_user), c
     return {"ok": True, "vetoes": count, "vetoed": vetoed}
 
 
+# ---------------------------------------------------------------- inbreng (speler-kant)
+
+@app.post("/api/feedback", dependencies=[Depends(require_ajax)])
+def create_feedback(payload: dict = Body(...), user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Speler (of admin als poll) oppert een vakje of een prijs. Bij voormoderatie blijft het
+    concept: geen feed-event en geen refresh totdat de admin het vrijgeeft."""
+    s = settings(conn)
+    me = user["id"]
+    if s.get("feedback_open", "1") != "1":
+        raise HTTPException(400, "De inbreng-inbox is gesloten")
+    if not feedback_limiter.check(f"uid:{me}"):
+        raise HTTPException(429, "Schreeuwt niet zo. Over een paar minuten weer proberen.")
+    kind = str(payload.get("kind", "item")).strip().lower()
+    if kind not in PROPOSAL_KINDS:
+        raise HTTPException(400, "Soort inbreng is onbekend")
+    text = " ".join(str(payload.get("text", "")).split())[:PROPOSAL_TEXT_MAX]
+    if len(text) < 3:
+        raise HTTPException(400, "Typ iets bruikbaars")
+    line_key = None
+    if kind == "prize":
+        line_key = str(payload.get("line_key", "default")).strip() or "default"
+        if line_key not in line_labels(conn, s):
+            raise HTTPException(400, "Die prijslijn bestaat niet")
+    dupe = conn.execute(
+        "SELECT id FROM proposals WHERE kind = ? AND status IN ('pending','visible') AND text = ? COLLATE NOCASE",
+        (kind, text),
+    ).fetchone()
+    if dupe:
+        raise HTTPException(409, "Die inbreng staat al — geef er een duim op")
+    cap = setting_int(s, "feedback_per_player")
+    if cap:
+        mine = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE user_id = ? AND status IN ('pending','visible')", (me,)
+        ).fetchone()[0]
+        if mine >= cap:
+            raise HTTPException(400, f"Je hebt al {cap} inbrengen open staan. Trek er een in of wacht op de admin")
+    status = "visible" if user["is_admin"] or s.get("feedback_premod", "1") != "1" else "pending"
+    cur = conn.execute(
+        "INSERT INTO proposals(kind, text, line_key, user_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (kind, text, line_key, me, status, now()),
+    )
+    if status == "visible":
+        add_event(conn, "feedback_new", me, what=kind, text=text, line=line_key or "")
+        refresh_all()
+    conn.commit()
+    return {"ok": True, "id": cur.lastrowid, "status": status}
+
+
+@app.post("/api/feedback/{proposal_id}/vote", dependencies=[Depends(require_ajax)])
+def vote_feedback(proposal_id: int, payload: dict = Body(default={}), user=Depends(current_user),
+                  conn: sqlite3.Connection = Depends(get_db)):
+    row = load_proposal(conn, proposal_id)
+    if row["status"] != "visible":
+        raise HTTPException(400, "Daarop kan niet meer gestemd worden — de admin heeft gekozen")
+    try:
+        vote = int(payload.get("vote", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Stem moet een getal zijn")
+    if vote not in (-1, 0, 1):
+        raise HTTPException(400, "Stem is duim op, duim down of weg")
+    if vote == 0:
+        conn.execute("DELETE FROM proposal_votes WHERE proposal_id = ? AND user_id = ?", (proposal_id, user["id"]))
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO proposal_votes(proposal_id, user_id, vote, created_at) VALUES (?, ?, ?, ?)",
+            (proposal_id, user["id"], vote, now()),
+        )
+    conn.commit()
+    refresh_all()
+    return {"ok": True}
+
+
+@app.delete("/api/feedback/{proposal_id}", dependencies=[Depends(require_ajax)])
+def withdraw_feedback(proposal_id: int, user=Depends(current_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Een speler (of admin) trekt zijn inbreng in. Een rij die de club nooit gezien heeft
+    (pending) verdwijnt stil; een vrijgegeven rij meldt dat ook, anders staat hij bij iedereen
+    nog als beschikbaar in de feed."""
+    row = load_proposal(conn, proposal_id)
+    if row["user_id"] != user["id"] and not user["is_admin"]:
+        raise HTTPException(403, "Dat is niet jouw inbreng")
+    if row["status"] not in ("pending", "visible"):
+        raise HTTPException(400, "Die inbreng staat niet meer open")
+    seen = row["status"] == "visible"
+    conn.execute("UPDATE proposals SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ?",
+                 (now(), user["id"], proposal_id))
+    if seen:
+        add_event(conn, "feedback_rejected", row["user_id"], what=row["kind"], text=row["text"],
+                  line=row["line_key"] or "", ingetrokken=True)
+    conn.commit()
+    refresh_all()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- push
 
 @app.post("/api/push/subscribe", dependencies=[Depends(require_ajax)])
@@ -659,9 +844,10 @@ async def stream(request: Request):
 ADMIN_TEXT_SETTINGS = {"title", "kicker", "subtitle", "footer", "default_line_prize", "full_card_prize"}
 ADMIN_INT_SETTINGS = {
     "grid_cols": (2, 6), "grid_rows": (2, 8), "jokers_per_player": (0, 5),
-    "veto_threshold": (0, 20), "witness_limit": (0, 50),
+    "veto_threshold": (0, 20), "witness_limit": (0, 50), "feedback_per_player": (0, 10),
 }
-ADMIN_BOOL_SETTINGS = {"line_rows", "line_cols", "line_diagonals", "grid_auto", "frozen"}
+ADMIN_BOOL_SETTINGS = {"line_rows", "line_cols", "line_diagonals", "grid_auto", "frozen",
+                       "feedback_open", "feedback_premod"}
 LAYOUT_KEYS = {"grid_cols", "grid_rows", "line_rows", "line_cols", "line_diagonals"}
 
 
@@ -697,6 +883,8 @@ def admin_state(user=Depends(admin_user), conn: sqlite3.Connection = Depends(get
         "players": players,
         "lines": [{"key": l["key"], "label": l["label"], "prize": custom.get(l["key"], "")} for l in game.lines(s)],
         "claims": claims,
+        "proposals": proposal_rows(conn, user["id"], admin=True),
+        "feedback": feedback_meta(conn, s, user["id"], True),
     }
 
 
@@ -810,6 +998,99 @@ def admin_prizes(payload: dict = Body(...), user=Depends(admin_user), conn: sqli
     conn.commit()
     refresh_all()
     return {"ok": True}
+
+
+# --------------------------------------------------------------- inbreng: admin-kant
+
+@app.post("/api/admin/feedback/{proposal_id}/approve", dependencies=[Depends(require_ajax)])
+def admin_approve_feedback(proposal_id: int, user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Vrijgeven voor iedereen. Hét moment voor het feed-event en de refresh: vóór dit moment is de
+    tekst alleen voor de admin, dus die mag ook niet in andermans feed verschijnen."""
+    row = load_proposal(conn, proposal_id)
+    if row["status"] == "visible":
+        return {"ok": True, "already": True}
+    if row["status"] != "pending":
+        raise HTTPException(400, "Die inbreng is al behandeld")
+    conn.execute("UPDATE proposals SET status = 'visible', decided_at = ?, decided_by = ? WHERE id = ?",
+                 (now(), user["id"], proposal_id))
+    add_event(conn, "feedback_new", row["user_id"], what=row["kind"], text=row["text"], line=row["line_key"] or "")
+    conn.commit()
+    refresh_all()
+    return {"ok": True}
+
+
+@app.post("/api/admin/feedback/{proposal_id}/reject", dependencies=[Depends(require_ajax)])
+def admin_reject_feedback(proposal_id: int, user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Afwijzen. Een pending rij is nooit bij de club geweest → geen feed-event; een vrijgegeven
+    rij wél, dus die krijgt een `feedback_rejected`-regel."""
+    row = load_proposal(conn, proposal_id)
+    if row["status"] not in ("pending", "visible"):
+        raise HTTPException(400, "Die inbreng is al behandeld")
+    seen = row["status"] == "visible"
+    conn.execute("UPDATE proposals SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ?",
+                 (now(), user["id"], proposal_id))
+    if seen:
+        add_event(conn, "feedback_rejected", row["user_id"], what=row["kind"], text=row["text"],
+                  line=row["line_key"] or "")
+    conn.commit()
+    refresh_all()
+    return {"ok": True}
+
+
+@app.post("/api/admin/feedback/{proposal_id}/reopen", dependencies=[Depends(require_ajax)])
+def admin_reopen_feedback(proposal_id: int, user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    row = load_proposal(conn, proposal_id)
+    if row["status"] != "rejected":
+        raise HTTPException(400, "Alleen afgewezen inbreng kan terug")
+    conn.execute("UPDATE proposals SET status = 'pending', decided_at = NULL, decided_by = NULL, adopted_ref = NULL"
+                 " WHERE id = ?", (proposal_id,))
+    conn.commit()
+    refresh_all()
+    return {"ok": True}
+
+
+@app.post("/api/admin/feedback/{proposal_id}/adopt", dependencies=[Depends(require_ajax)])
+def admin_adopt_feedback(proposal_id: int, user=Depends(admin_user), conn: sqlite3.Connection = Depends(get_db)):
+    """Van een inbreng wordt echt spel: een vakje (vult alleen lege cellen, claims blijven staan) of
+    een prijs (line_prizes / full_card_prize / default_line_prize)."""
+    row = load_proposal(conn, proposal_id)
+    s = settings(conn)
+    if row["status"] == "adopted":
+        return {"ok": True, "already": True, "ref": row["adopted_ref"]}
+    grid_plan = None
+    if row["kind"] == "item":
+        dup = conn.execute("SELECT id FROM items WHERE active = 1 AND text = ? COLLATE NOCASE", (row["text"],)).fetchone()
+        if dup:
+            raise HTTPException(409, "Dat vakje bestaat al")
+        cur = conn.execute("INSERT INTO items(text, created_at) VALUES (?, ?)", (row["text"], now()))
+        ref = f"item:{cur.lastrowid}"
+        label = "vakje"
+        game.rebuild_everything(conn, reshuffle=False)  # only fills empty cells
+        if setting_int(s, "grid_auto") == 1:
+            grid_plan = game.auto_grid(conn, s, protect=True)
+    else:
+        key = row["line_key"] or "default"
+        text = row["text"][:200]
+        if key == "full":
+            conn.execute("INSERT INTO settings(key, value) VALUES ('full_card_prize', ?)"
+                         " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (text,))
+        elif key == "default":
+            conn.execute("INSERT INTO settings(key, value) VALUES ('default_line_prize', ?)"
+                         " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (text,))
+        else:
+            if key not in {l["key"] for l in game.lines(s)}:
+                raise HTTPException(400, "Die lijn bestaat niet meer in dit rooster")
+            conn.execute("INSERT OR REPLACE INTO line_prizes(line_key, prize) VALUES (?, ?)", (key, text))
+        ref = f"prize:{key}"
+        label = line_labels(conn, s).get(key, "prijs")
+    conn.execute(
+        "UPDATE proposals SET status = 'adopted', decided_at = ?, decided_by = ?, adopted_ref = ? WHERE id = ?",
+        (now(), user["id"], ref, proposal_id),
+    )
+    add_event(conn, "feedback_adopted", row["user_id"], what=row["kind"], text=row["text"], line=label)
+    conn.commit()
+    refresh_all()
+    return {"ok": True, "ref": ref, "grid": grid_plan}
 
 
 @app.post("/api/admin/invites", dependencies=[Depends(require_ajax)])

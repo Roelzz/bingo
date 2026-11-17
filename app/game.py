@@ -193,8 +193,10 @@ def refresh_bingos(conn: sqlite3.Connection, user_id: int, s: dict[str, str] | N
     prize_map = prizes(conn, s)
     won = []
     for key in sorted(complete - existing, key=lambda k: (k == "full", k)):
-        conn.execute("INSERT INTO bingos(user_id, line_key, achieved_at) VALUES (?, ?, ?)", (user_id, key, now()))
-        entry = {"key": key, "label": line_label(s, key), "prize": prize_map.get(key, "")}
+        prize = prize_map.get(key, "")
+        conn.execute("INSERT INTO bingos(user_id, line_key, achieved_at, prize) VALUES (?, ?, ?, ?)",
+                     (user_id, key, now(), prize))
+        entry = {"key": key, "label": line_label(s, key), "prize": prize}
         add_event(conn, "full_card" if key == "full" else "bingo", user_id, line=entry["label"], prize=entry["prize"])
         won.append(entry)
     return won

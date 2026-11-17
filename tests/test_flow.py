@@ -499,3 +499,263 @@ def test_prune_admins_env_clears_legacy_admins(clients):
     players = admin.get("/api/admin", headers=H).json()["players"]
     assert "Prunella" not in {p["nickname"] for p in players}
     assert {"roel@test.nl", "bart@test.nl"} <= {p["email"] for p in players}
+
+
+# ---------------------------------------------------------------- inbreng (vakjes + prijzen)
+
+def register_player(admin, nickname: str) -> TestClient:
+    """Gewone speler aanmaken (voor tests die een schone kaart nodig hebben)."""
+    code = admin.post("/api/admin/invites", json={"count": 1}, headers=H).json()["codes"][0]
+    c = TestClient(app)
+    r = c.post("/register", data={"code": code, "email": f"{nickname.lower()}@test.nl", "nickname": nickname,
+                                  "password": "wachtwoord1"}, follow_redirects=False)
+    assert r.status_code == 303, r.text
+    return c
+
+
+def post_fb(client, kind: str, text: str, line_key: str | None = None):
+    body = {"kind": kind, "text": text}
+    if line_key:
+        body["line_key"] = line_key
+    return client.post("/api/feedback", json=body, headers=H)
+
+
+def proposal_by_text(client, text: str, admin_view: bool = False) -> dict | None:
+    src = client.get("/api/admin", headers=H).json() if admin_view else client.get("/api/state").json()
+    return next((p for p in src.get("proposals", []) if p["text"] == text), None)
+
+
+def confirm_cells(admin, player: TestClient, positions: list[int]) -> None:
+    """Cellen claimen en door de admin als getuige laten bevestigen (voor een verse kaart)."""
+    pid = ids(player)[1]
+    by_pos = {c["pos"]: c for c in player.get("/api/state").json()["card"]}
+    for pos in positions:
+        cell = by_pos[pos]
+        if cell["status"] != "open":
+            continue
+        r = player.post("/api/claims", json={"item_id": cell["item_id"], "witness_id": pid["Roel"]}, headers=H)
+        assert r.status_code == 200, r.text
+        cid = admin.get("/api/state").json()["witness_requests"][0]["claim_id"]
+        assert admin.post(f"/api/claims/{cid}/confirm", headers=H).status_code == 200
+
+
+def set_feedback(admin, **settings) -> None:
+    assert admin.post("/api/admin/settings", json=settings, headers=H).status_code == 200
+
+
+def test_feedback_is_a_draft_until_the_admin_frees_it(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    set_feedback(admin, feedback_open=True, feedback_premod=True, feedback_per_player=5)
+    bart, joost = players["Bart"], players["Joost"]
+
+    r = post_fb(bart, "item", "Hoed van de kater")
+    assert r.status_code == 200, r.text
+    pid, status = r.json()["id"], r.json()["status"]
+    assert status == "pending"
+
+    mine = proposal_by_text(bart, "Hoed van de kater")
+    assert mine and mine["status"] == "pending" and mine["nickname"] == "Bart"
+    assert bart.get("/api/state").json()["feedback"]["mine_open"] == 1
+
+    # nog niets voor andere spelers: niet in de lijst, niet in de feed, niet te stemmen
+    assert proposal_by_text(joost, "Hoed van de kater") is None
+    assert not any("Hoed van de kater" in str(e.get("text")) for e in joost.get("/api/state").json()["feed"])
+    assert joost.post(f"/api/feedback/{pid}/vote", json={"vote": 1}, headers=H).status_code == 400
+    assert post_fb(joost, "item", "Hoed van de kater").status_code == 409  # dubbel doublet, ook vóór de cap
+
+    # de admin ziet de wachtrij wél
+    queue = proposal_by_text(admin, "Hoed van de kater", admin_view=True)
+    assert queue and queue["status"] == "pending"
+
+    assert admin.post(f"/api/admin/feedback/{pid}/approve", headers=H).status_code == 200
+    freed = proposal_by_text(joost, "Hoed van de kater")
+    assert freed and freed["status"] == "visible" and freed["can_vote"]
+    assert any("Hoed van de kater" in str(e.get("text")) for e in joost.get("/api/state").json()["feed"])
+    assert proposal_by_text(admin, "Hoed van de kater", admin_view=True)["status"] == "visible"
+
+
+def test_feedback_votes_withdraw_and_admin_polls(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    bart, joost = players["Bart"], players["Joost"]
+
+    pid = post_fb(bart, "prize", "Frikkedel met patat", "r0").json()["id"]
+    admin.post(f"/api/admin/feedback/{pid}/approve", headers=H)
+
+    assert joost.post(f"/api/feedback/{pid}/vote", json={"vote": 1}, headers=H).status_code == 200
+    row = proposal_by_text(bart, "Frikkedel met patat")
+    assert row["up"] == 1 and row["down"] == 0 and row["score"] == 1
+    assert proposal_by_text(joost, "Frikkedel met patat")["my_vote"] == 1
+
+    joost.post(f"/api/feedback/{pid}/vote", json={"vote": -1}, headers=H)   # vervangt, geen dubbele stem
+    assert (proposal_by_text(bart, "Frikkedel met patat")["up"], proposal_by_text(bart, "Frikkedel met patat")["down"]) == (0, 1)
+    joost.post(f"/api/feedback/{pid}/vote", json={"vote": 0}, headers=H)    # weer intrekken
+    assert (proposal_by_text(bart, "Frikkedel met patat")["up"], proposal_by_text(bart, "Frikkedel met patat")["down"]) == (0, 0)
+    assert joost.post(f"/api/feedback/{pid}/vote", json={"vote": 7}, headers=H).status_code == 400
+
+    assert post_fb(joost, "prize", "Frikkedel met patat", "r1").status_code == 409  # zelfde tekst, zelfde soort
+    assert post_fb(bart, "prize", "Ko").status_code == 400                          # te kort
+    assert post_fb(bart, "troep", "Iets anders").status_code == 400                 # onbekend soort
+    assert post_fb(bart, "prize", "Rare lijn", "r99").status_code == 400            # lijn bestaat niet
+
+    # admin-printschappen zijn meteen vrij (poll), en iemand anders' inbreng cancle je niet
+    assert post_fb(admin, "item", "Poll: like of kut").json()["status"] == "visible"
+    assert bart.delete(f"/api/feedback/{proposal_by_text(admin, 'Poll: like of kut')['id']}", headers=H).status_code == 403
+    assert bart.delete(f"/api/feedback/{pid}", headers=H).status_code == 200        # maker mag intrekken
+    assert proposal_by_text(joost, "Frikkedel met patat") is None
+    assert any(e["kind"] == "feedback_rejected" and e.get("ingetrokken") for e in joost.get("/api/state").json()["feed"])
+    assert proposal_by_text(admin, "Frikkedel met patat", admin_view=True)["status"] == "rejected"
+    assert admin.post(f"/api/admin/feedback/{pid}/reopen", headers=H).status_code == 200
+    assert proposal_by_text(admin, "Frikkedel met patat", admin_view=True)["status"] == "pending"
+
+
+def test_feedback_afwijzen_is_allleen_publiek_als_de_club_het_zag(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    set_feedback(admin, feedback_open=True, feedback_premod=True, feedback_per_player=5, grid_auto=False)
+    set_grid(admin, 6, 8)
+    bart, joost = players["Bart"], players["Joost"]
+
+    # nooit vrijgegeven → de club merkt er niets van, ook niet achteraf
+    stil = post_fb(bart, "item", "Stille scheet in de hoek").json()["id"]
+    assert admin.post(f"/api/admin/feedback/{stil}/reject", headers=H).status_code == 200
+    feed = joost.get("/api/state").json()["feed"]
+    assert not any("Stille" in str(e.get("text")) for e in feed)
+
+    # wél vrijgegeven → die afkeuring verschijnt gewoon in de feed
+    luid = post_fb(bart, "prize", "Patat voor de rij", "r0").json()["id"]
+    admin.post(f"/api/admin/feedback/{luid}/approve", headers=H)
+    assert admin.post(f"/api/admin/feedback/{luid}/reject", headers=H).status_code == 200
+    feed = joost.get("/api/state").json()["feed"]
+    af = [e for e in feed if e["kind"] == "feedback_rejected" and "Patat" in str(e.get("text"))]
+    assert af and not af[0].get("ingetrokken")                        # afgewezen door de admin, niet ingetrokken
+    assert proposal_by_text(joost, "Patat voor de rij") is None      # afgewezen = weg bij de club
+
+    # aangenomen blijft wél bij iedereen staan, als bewijs dat de club iets voor elkaar kreeg
+    pid = post_fb(bart, "item", "Vlag op het balkon").json()["id"]
+    admin.post(f"/api/admin/feedback/{pid}/approve", headers=H)
+    assert admin.post(f"/api/admin/feedback/{pid}/adopt", headers=H).status_code == 200
+    seen = proposal_by_text(joost, "Vlag op het balkon")
+    assert seen and seen["status"] == "adopted" and not seen["can_vote"] and not seen["can_edit"]
+    assert joost.post(f"/api/feedback/{pid}/vote", json={"vote": 1}, headers=H).status_code == 400
+
+
+def test_feedback_adopt_item_adds_a_vakje_without_breaking_claims(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    set_feedback(admin, grid_auto=False)
+    set_grid(admin, 6, 8)                      # veel meer cellen dan vakjes: ruimte voor een nieuw vakje
+    nina = register_player(admin, "Nina")
+    confirm_cells(admin, nina, [0])            # één claim die niet mag verschuiven
+    before = {(c["pos"], c["text"]) for c in nina.get("/api/state").json()["card"] if c["status"] == "confirmed"}
+    assert len(before) == 1
+
+    pid = post_fb(nina, "item", "Kriebel op de toonbank").json()["id"]
+    assert proposal_by_text(nina, "Kriebel op de toonbank")["status"] == "pending"
+    admin.post(f"/api/admin/feedback/{pid}/approve", headers=H)
+    r = admin.post(f"/api/admin/feedback/{pid}/adopt", headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["ref"].startswith("item:")
+
+    items = {i["text"] for i in admin.get("/api/admin", headers=H).json()["items"]}
+    assert "Kriebel op de toonbank" in items
+    assert proposal_by_text(admin, "Kriebel op de toonbank", admin_view=True)["status"] == "adopted"
+      # twee keer adopteren doet niets meer
+    assert admin.post(f"/api/admin/feedback/{pid}/adopt", headers=H).json().get("already") is True
+
+    card = nina.get("/api/state").json()["card"]
+    assert {(c["pos"], c["text"]) for c in card if c["status"] == "confirmed"} == before  # claims intact
+    assert any(c["text"] == "Kriebel op de toonbank" for c in card), "nieuw vakje staat op geen enkele kaart"
+    assert any("Kriebel op de toonbank" in str(e.get("text")) for e in nina.get("/api/state").json()["feed"])
+
+
+def test_feedback_adopt_prize_and_won_prize_stays_frozen(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    set_feedback(admin, grid_auto=False)
+    set_grid(admin, 3, 4)
+    nina = register_player(admin, "Nina2")
+
+    pid = post_fb(nina, "prize", "Patat met frikandel", "r0").json()["id"]
+    admin.post(f"/api/admin/feedback/{pid}/approve", headers=H)
+    assert admin.post(f"/api/admin/feedback/{pid}/adopt", headers=H).status_code == 200
+    lines = {l["key"]: l["prize"] for l in admin.get("/api/admin", headers=H).json()["lines"]}
+    assert lines["r0"] == "Patat met frikandel"
+
+    confirm_cells(admin, nina, [0, 1, 2])                   # wint rij 1 met die prijs
+    state = nina.get("/api/state").json()
+    assert {l["key"]: l["prize"] for l in state["lines"] if l["won"]}["r0"] == "Patat met frikandel"
+    board = next(p for p in state["leaderboard"] if p["nickname"] == "Nina2")
+    assert "Patat met frikandel" in [p["prize"] for p in board["prizes"]]
+
+    # latere prijs mag veranderen, maar de win blijft zoals die was
+    assert admin.post("/api/admin/prizes", json={"r0": "Dubbel gat"}, headers=H).status_code == 200
+    state = nina.get("/api/state").json()
+    won = {l["key"]: l["prize"] for l in state["lines"] if l["won"]}
+    assert won["r0"] == "Patat met frikandel"
+    assert next(p for p in state["leaderboard"] if p["nickname"] == "Nina2")["prizes"][0]["prize"] == "Patat met frikandel"
+
+
+def test_feedback_inbox_can_be_closed_and_capped(clients):
+    from app.auth import feedback_limiter
+
+    admin, players = clients
+    feedback_limiter.hits.clear()
+    bart = players["Bart"]
+    set_feedback(admin, feedback_open=False)
+    r = post_fb(bart, "item", "Kapotte schreeuw")
+    assert r.status_code == 400 and "gesloten" in r.json()["detail"]
+    assert bart.get("/api/state").json()["feedback"]["open"] is False
+
+    nina = register_player(admin, "Nina3")
+    set_feedback(admin, feedback_open=True, feedback_per_player=1)
+    assert post_fb(nina, "item", "Eén mag er").status_code == 200
+    r = post_fb(nina, "item", "Twee kan niet")
+    assert r.status_code == 400 and "open staan" in r.json()["detail"]
+    assert nina.get("/api/state").json()["feedback"]["per_player"] == 1
+    set_feedback(admin, feedback_per_player=0)
+    assert post_fb(nina, "item", "Onbeperkt ook").status_code == 200
+
+
+def test_a_start_snapshots_the_db_and_prunes_the_history(tmp_path, monkeypatch):
+    """Elke start legt een rollend snapshot neer: een kapotte migratie is dan terug te draaien
+    zonder shell-toegang op de server."""
+    from pathlib import Path
+
+    from app import config, db
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "bingo.db")
+
+    raw = sqlite3.connect(tmp_path / "bingo.db")
+    raw.execute("CREATE TABLE proef (x TEXT)")
+    raw.execute("INSERT INTO proef VALUES ('rauw')")
+    raw.commit()
+    raw.close()
+
+    first = db.snapshot_db(keep=2)
+    assert first and Path(first).exists()
+    with sqlite3.connect(first) as snap:
+        assert snap.execute("SELECT x FROM proef").fetchone()[0] == "rauw"
+
+    for _ in range(3):
+        db.snapshot_db(keep=2)
+    files = sorted((tmp_path / "backups").glob("bingo-*.db"))
+    assert len(files) == 2, [f.name for f in files]
+    assert files[0].name < files[1].name                       # namen sorteren op tijdstempel
+
+    monkeypatch.setattr(config, "DB_SNAPSHOT_KEEP", 0)
+    assert db.snapshot_db() is None                            # uit = niets doen, bestaande snapshots blijven
+    assert len(list((tmp_path / "backups").glob("bingo-*.db"))) == 2

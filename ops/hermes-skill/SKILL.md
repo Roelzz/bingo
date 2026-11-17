@@ -1,6 +1,6 @@
 ---
 name: bingo-admin
-description: Drive the Speerpunt Bingo / tombala web app as admin via its HTTP API (production: https://bingo.speerpunt.roelschenk.com, Coolify). Use for anything in the bingo game — players, invite codes, vakjes/items, win lines and prizes, grid/rooster optimisation, claims and witnesses, vetoes, feed, leaderboard, freeze, announcements + push, reshuffle, new game. One stdlib CLI: scripts/bingo.py. Irreversible actions are gated behind --yes.
+description: Drive the Speerpunt Bingo / tombala web app as admin via its HTTP API (production: https://bingo.speerpunt.roelschenk.com, Coolify). Use for anything in the bingo game — players, invite codes, vakjes/items, win lines and prizes, grid/rooster optimisation, claims and witnesses, vetoes, feed, leaderboard, inbreng-modratie (speler-suggesties voor vakjes/prijzen vrijgeven en aannemen), freeze, announcements + push, reshuffle, new game. One stdlib CLI: scripts/bingo.py. Irreversible actions are gated behind --yes.
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -53,7 +53,8 @@ Session token cache: `~/.hermes/mcp-tokens/bingo/<host>.json` (0600). Delete it 
 | `items` · `items-add "tekst" ...` / `--file vakjes.txt` / stdin · `item-set ID "tekst"` · `item-del ID` | the vakjes; adding fills empty card cells only |
 | `grid` · `grid-set C R` · `grid-auto on\|off` · `grid-optimize [--force]` | rooster; auto keeps it optimal for the item count without reshuffling cards. `grid-set` is bounded 2–6 × 2–8 (the API clamps silently otherwise) and turns `grid_auto` off |
 | `lines [--rijen on\|off] [--kolommen ...] [--diagonalen ...]` | which directions pay (vertical is off by default in code) |
-| `prizes` · `prizes r0="Rakı" full="..."` · `settings [key=waarde ...]` | prizes per line (`full=` maps to the `full_card_prize` setting), all settings (title/kicker/jokers/veto/witness/frozen) |
+| `prizes` · `prizes r0="Rakı" full="..."` · `settings [key=waarde ...]` | prizes per line (`full=` maps to the `full_card_prize` setting), all settings (title/kicker/jokers/veto/witness/frozen, plus `feedback_open`/`feedback_premod`/`feedback_per_player`) |
+| `feedback` · `feedback-add "tekst" [--kind item\|prize] [--line r0]` · `feedback-approve ID` · `feedback-adopt ID` · `feedback-reject ID` · `feedback-reopen ID` | de inbreng-inbox: wat de club oppert aan vakjes en prijzen, vrijgeven, afkeuren, of er echt een vakje/prijs van maken (`adopt`) |
 | `freeze on\|off` | stop/resume the game (players see "Klaar is Kees") |
 | `claims [--status pending\|confirmed]` · `witness` · `confirm ID` · `reject ID` · `veto ID` · `revoke ID` | claim handling |
 | `announce "tekst"` | feed announcement **plus web-push to every subscribed phone** |
@@ -106,6 +107,17 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   `joker` claims are auto-confirmed and cost one of `jokers_per_player`. A claim gains vetoes
   from other players; at `veto_threshold` it becomes `vetoed` (penalty for the claimant).
 - Deleting an item soft-deletes it (`active=0`) and revokes its open claims — history stays.
+- Inbreng (proposals): `proposals.kind` is `item` or `prize`, `line_key` only for prizes
+  (`r0`/`c0`/`dr0`/`full`/`default` = elke lijn). Statussen: `pending` (alleen maker + admin),
+  `visible` (iedereen, mag stemmen 👍👎), `adopted`, `rejected`. Met `feedback_premod=on`
+  (default) komt een spelers-inbreng in de wacht te liggen: géén feed-event en géén SSE-refresh
+  tot `feedback-approve`. Een admin-inbreng is altijd direct `visible` (handig als poll).
+  Max open inbrengen per speler: `feedback_per_player` (0 = vrij), plus 8 pogingen / 5 min.
+- `adopt` is de knop die ertoe doet: `kind=item` voegt een echt vakje toe (kaarten worden alleen
+  aangevuld, claims blijven staan, autoset doet het rooster meebewegen als dat veilig is),
+  `kind=prize` overschrijft de prijs op die lijn (of `full_card_prize`/`default_line_prize`).
+  Een gewonnen lijn onthoudt de prijsteks van het moment van winnen (`bingos.prize`), dus latere
+  prijs-wijzigingen herschrijven de history niet.
 
 ## Recipes
 
@@ -127,6 +139,21 @@ Winnaars aanmoedigen: `announce "Gefeliciteerd, Volle kaart voor X!"` (gaat ook 
 
 **Einde spel / volgende ronde**: laat `new-game` niet uit een eigen aanname lopen — Roel
 moet het expliciet vragen. Anders alleen `reshuffle` (kaarten nieuw, claims blijven).
+
+**Inbreng modereren** (spelers mogen meedenken over vakjes en prijzen):
+
+```bash
+python3 $B feedback                       # wachtrij bovenaan, met 👍/👎 per suggestie
+python3 $B feedback-approve 7             # vrij voor de club: feed + stand worden live
+python3 $B feedback-adopt 7               # van suggestie naar echt vakje / echte prijs
+python3 $B feedback-reject 9              # afkeuren (blijft staan in de history)
+python3 $B feedback-add "patat voor de diagonaal" --kind prize --line dr0   # eigen poll
+python3 $B settings feedback_open=off feedback_premod=off feedback_per_player=3
+```
+
+`adopt` met `kind=item` kan zeggen dat het rooster niet meebeweegt (`"Raster zou bestaande
+bingo's kosten"`): dan staat het vakje in de lijst maar op geen enkele kaart; kies met
+`grid-set` handmatig een groter rooster. In de app heeft elk account de tab **Inbreng**.
 
 **Argeloze spelers / klachten**: `feed --limit 40` en `album` laten zien wat er echt gebeurd
 is; `state --json` geeft de volledige kaart + claims per speler.

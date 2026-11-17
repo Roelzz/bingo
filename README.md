@@ -15,6 +15,7 @@ Stack: Python 3.12 met uv, FastAPI, SQLite, Server Sent Events, Web Push. Geen b
 - **Lijnen**: horizontale rijen en diagonalen (kolommen kun je aanzetten). Bij een 3×4 raster zijn er 4 diagonalen van 3 vakjes.
 - **Prijzen**: per lijn, en iedereen die een lijn haalt wint die prijs. Volle kaart is de superprijs.
 - **Album**: alle bewijsfoto's van het weekend. Foto's worden op de telefoon verkleind en op de server ontdaan van metadata (ook GPS).
+- **Inbreng** (tab **Inbreng**): iedereen mag een **vakje** of een **prijs** opperen. Met voormoderatie (aan) ligt het eerst bij de admin; na vrijgeven staat het open op de feed en kan de club 👍/👎 stemmen. De admin kiest **Aannemen**: dan wordt het een echt vakje (kaarten worden aangevuld, bestaande claims blijven staan) of de prijs op die lijn. Een gewonnen lijn onthoudt de prijs van dat moment, dus later schaven aan een prijs herschrijft de win niet.
 
 ## Lokaal draaien met uv
 
@@ -118,12 +119,22 @@ API: `GET /api/admin/grid` (huidige + optimale stand en wat een wissel kost), `P
 
 ## Data en backup
 
-Alles staat in `/data`: `tombala.db` (SQLite), `uploads/` (foto's) en `vapid_private.pem` (pushsleutel). Verlies de pushsleutel niet, anders moet iedereen meldingen opnieuw aanzetten.
+Alles staat in `/data`: `bingo.db` (SQLite), `uploads/` (foto's), `vapid_private.pem` (pushsleutel) en
+`backups/` (hieronder). Verlies de pushsleutel niet, anders moet iedereen meldingen opnieuw aanzetten.
 
-Backup terwijl de app draait:
+**Elke start legt vanzelf een snapshot van de DB neer** in `/data/backups/bingo-<tijdstempel>.db`; er blijven er
+vijf (nieuwste wint), te regelen met `DB_SNAPSHOT_KEEP` (0 = uit). De eerste start op een lege map slaat over
+(er is niets te redden), en een mislukte snapshot laat de app gewoon starten. Het is een kopie van vóór de
+migraties van die start, dus een kapotte migratie is terug te draaien zonder shell op de server:
 
 ```bash
-docker exec <container> python -c "import sqlite3; s=sqlite3.connect('/data/tombala.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d)"
+cp /data/backups/bingo-20261117-191439.472296.db /data/bingo.db   # + rm /data/bingo.db-wal /data/bingo.db-shm
+```
+
+Backup tijdens het draaien (ook los, bijv. vóór een grote wijziging):
+
+```bash
+docker exec <container> python -c "import sqlite3; s=sqlite3.connect('/data/bingo.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d)"
 ```
 
 ## Tips voor de admin

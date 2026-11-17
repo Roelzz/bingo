@@ -15,6 +15,7 @@
   let tab = LS.get("tab", "card");
   let adminData = null;
   let albumData = null;
+  let fbDraft = LS.get("fbDraft", { kind: "item", text: "", line_key: "" });
   let adminOpen = new Set(LS.get("adminOpen", ["invites"]));
   let loadTimer = null;
   let sheetHandler = null;
@@ -216,6 +217,13 @@
     const newest = S.feed.length ? S.feed[0].id : 0;
     $("#badgeFeed").hidden = tab === "feed" || newest <= seen;
     if (tab === "feed") LS.set(`feedSeen:${ME.id}`, newest);
+    const fb = S.feedback || {};
+    const waiting = (S.proposals || []).filter((p) => p.status === "pending").length;
+    const fbBadge = $("#badgeFeedback");
+    if (fbBadge) {
+      fbBadge.hidden = tab === "feedback" || !waiting;
+      fbBadge.textContent = waiting;
+    }
     if ("setAppBadge" in navigator) { (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); }
   }
 
@@ -322,6 +330,7 @@
     if (tab === "card") renderCard();
     else if (tab === "feed") renderFeed();
     else if (tab === "board") renderBoard();
+    else if (tab === "feedback") renderFeedback();
     else if (tab === "album") renderAlbum();
     else if (tab === "admin") renderAdmin();
     updateBadges();
@@ -424,6 +433,9 @@
       case "bingo": return ["🎉", `<b>BINGO!</b> ${who} · ${esc(e.line)}${e.prize ? ` · 🏆 ${esc(e.prize)}` : ""}`];
       case "full_card": return ["🏆", `<b>VOLLE KAART!</b> ${who}${e.prize ? ` · ${esc(e.prize)}` : ""}`];
       case "announce": return ["📣", `${who}: ${esc(e.text)}`];
+      case "feedback_new": return ["💡", `${who} oppert ${e.what === "prize" ? "een prijs" : "een vakje"}: <span class="item">“${esc(e.text)}”</span>`];
+      case "feedback_adopted": return ["🛠", `Inbreng van ${who} wordt spel: ${e.what === "prize" ? "prijs" : "vakje"} <span class="item">“${esc(e.text)}”</span>`];
+      case "feedback_rejected": return ["🚫", `Inbreng van ${who} ${e.ingetrokken ? "ingetrokken" : "afgekeurd"}: “${esc(e.text)}”`];
       default: return ["•", who];
     }
   }
@@ -477,6 +489,66 @@
     view.innerHTML = `
       <div class="section-title"><h2>Stand</h2><span class="aside">🎯 bingo · ✅ vakjes · 🍺 strafslok · 👀 getuige</span></div>
       <div class="board">${rows}</div>`;
+  }
+
+  function fbRows(list, ctx) {
+    const label = (p) => (p.kind === "prize" ? (p.line || "prijs") : "vakje");
+    return list.map((p) => {
+      const tag = p.status === "pending" ? `<span class="pill wait"> wacht op goedkeuring</span>`
+        : p.status === "adopted" ? `<span class="pill ok">aangenomen</span>`
+        : p.status === "rejected" ? `<span class="pill bad">ingetrokken</span>` : "";
+      const votes = p.can_vote ? `<div class="fb-votes">
+          <button class="${p.my_vote === 1 ? "on" : ""}" data-act="fb-vote" data-id="${p.id}" data-vote="1" aria-label="Duim op">👍</button>
+          <span class="score">${p.score > 0 ? "+" : ""}${p.score}</span>
+          <button class="${p.my_vote === -1 ? "on" : ""}" data-act="fb-vote" data-id="${p.id}" data-vote="-1" aria-label="Duim down">👎</button>
+        </div>` : "";
+      const mine = p.can_edit ? `<button class="btn small ghost" data-act="fb-withdraw" data-id="${p.id}">✕</button>` : "";
+      return `<div class="fb-item st-${p.status}">
+        ${avatar(p.nickname, p.color, "sm")}
+        <div class="txt">${esc(p.text)} ${tag}
+          <div class="who">${esc(label(p))}${p.line && p.kind === "prize" ? "" : ""} · ${esc(p.nickname)} · ${esc(ago(p.at))}</div>
+        </div>
+        ${votes}${mine}
+      </div>`;
+    }).join("");
+  }
+
+  function renderFeedback() {
+    const fb = S.feedback || {};
+    const list = S.proposals || [];
+    const others = list.filter((p) => p.user_id !== ME.id && (p.status === "visible" || p.status === "adopted"));
+    const mine = list.filter((p) => p.user_id === ME.id);
+    if (tab === "feedback") {                    // tekst redden tegen een SSE-refresh
+      const ta = $("#fbText");
+      if (ta) fbDraft.text = ta.value;
+      if ($("#fbLine")) fbDraft.line_key = $("#fbLine").value;
+      LS.set("fbDraft", fbDraft);
+    }
+    const lineOpts = S.lines.map((l) => `<option value="${esc(l.key)}" ${fbDraft.line_key === l.key ? "selected" : ""}>${esc(l.label)}</option>`).join("");
+    const box = fb.open ? `
+      <div class="fb-form">
+        <div class="fb-row2">
+          <div class="seg">
+            <button class="${fbDraft.kind === "item" ? "on" : ""}" data-act="fb-kind" data-kind="item">🔲 Vakje</button>
+            <button class="${fbDraft.kind === "prize" ? "on" : ""}" data-act="fb-kind" data-kind="prize">🏆 Prijs</button>
+          </div>
+          ${fbDraft.kind === "prize" ? `<select id="fbLine"><option value="default" ${fbDraft.line_key === "default" || !fbDraft.line_key ? "selected" : ""}>Elke lijn</option><option value="full" ${fbDraft.line_key === "full" ? "selected" : ""}>Volle kaart</option>${lineOpts}</select>` : ""}
+        </div>
+        <textarea id="fbText" rows="2" maxlength="160" placeholder="${fbDraft.kind === "prize" ? "Bijv. een patat met frikandel voor wie de diagonaal haalt" : "Bijv. een selfie met een kat in Cihangir"}">${esc(fbDraft.text)}</textarea>
+        <div class="fb-foot">
+          <span class="fb-quiet">${fb.premod ? "Komt eerst bij de admin te liggen" : "Staat meteen voor iedereen klaar"}${fb.per_player ? ` · ${fb.mine_open}/${fb.per_player} van jou open` : ""}</span>
+          <button class="btn gold" data-act="fb-send">Opperen</button>
+        </div>
+      </div>` : `<p class="notice">📭 De inbreng-inbox is nu dicht. De admin kan hem weer openzetten.</p>`;
+
+    view.innerHTML = `
+      <div class="section-title"><h2>Inbreng</h2><span class="aside">vakjes en prijzen door de club</span></div>
+      ${box}
+      ${others.length ? `<div class="section-title"><h2>Clubideeën</h2><span class="aside">👍 👎 tot de admin kiest</span></div>
+        <div class="fb-list">${fbRows(others, "others")}</div>` : ""}
+      ${mine.length ? `<div class="section-title"><h2>Jouw inbreng</h2><span class="aside"></span></div>
+        <div class="fb-list">${fbRows(mine, "mine")}</div>` : ""}
+      ${!others.length && !mine.length ? `<div class="empty-state"><div class="big">💡</div><p>Nog geen inbreng. Jij bent de eerste.</p></div>` : ""}`;
   }
 
   async function loadAlbum() {
@@ -550,6 +622,22 @@
         ${p.id === ME.id ? "" : `<button class="btn small ghost" data-act="del-player" data-id="${p.id}" data-name="${esc(p.nickname)}">🗑</button>`}
       </div>`).join("");
 
+    const fbKind = (p) => (p.kind === "prize" ? `prijs${p.line ? ` · ${esc(p.line)}` : ""}` : "vakje");
+    const feedback = (A.proposals || []).map((p) => `
+      <div class="li">
+        ${avatar(p.nickname, p.color, "sm")}
+        <div class="grow">
+          <div>${esc(p.text)}</div>
+          <div class="small">${fbKind(p)} · ${esc(p.nickname)} · ${esc(ago(p.at))} · 👍 ${p.up} 👎 ${p.down}</div>
+        </div>
+        <span class="pill ${p.status === "visible" ? "ok" : p.status === "adopted" ? "ok" : p.status === "pending" ? "wait" : "bad"}">${
+          p.status === "pending" ? "wacht" : p.status === "visible" ? "vrij" : p.status === "adopted" ? "aangenomen" : "af"}</span>
+        ${p.status === "pending" ? `<button class="btn small teal" data-act="fb-approve" data-id="${p.id}">✓ Vrijgeven</button>` : ""}
+        ${p.status !== "adopted" ? `<button class="btn small gold" data-act="fb-adopt" data-id="${p.id}">🛠 Aannemen</button>` : ""}
+        ${p.status === "pending" || p.status === "visible" ? `<button class="btn small ghost" data-act="fb-reject" data-id="${p.id}">🚫</button>` : ""}
+        ${p.status === "rejected" ? `<button class="btn small ghost" data-act="fb-reopen" data-id="${p.id}">↺</button>` : ""}
+      </div>`).join("");
+
     const claims = A.claims.map((c) => `
       <div class="li">
         <div class="grow"><b>${esc(c.user)}</b> · ${esc(c.item)}<div class="small">${c.joker ? "joker" : `getuige ${esc(c.witness)}`} · ${esc(ago(c.at))}</div></div>
@@ -603,6 +691,13 @@
       ${adm("players", `👥 Spelers <span class="muted">${A.players.length}</span>`, `<div class="list">${players}</div>
         <p class="small muted">🔑 nieuw wachtwoord · ↺ kaart en claims resetten · 🗑 verwijderen</p>`)}
       ${adm("claims", `🧾 Claims <span class="muted">${A.claims.length}</span>`, `<div class="list">${claims || `<p class="muted">Nog niks.</p>`}</div>`)}
+      ${adm("feedback", `💡 Inbreng <span class="muted">${(A.proposals || []).filter((p) => p.status === "pending").length} te wachten</span>`, `
+        <p class="small muted">Spelers kunnen vakjes en prijzen opperen. Eerst jóúw goedkeuring, dan pas ziet de rest het. Aannemen maakt ervan wat het zegt: een echt vakje, of de prijs op die lijn.</p>
+        <label class="toggle">📥 Inbreng-toestaan<input type="checkbox" data-set="feedback_open" ${s.feedback_open === "1" ? "checked" : ""}></label>
+        <label class="toggle">🔍 Eerst goedkeuren (uit = meteen voor iedereen)<input type="checkbox" data-set="feedback_premod" ${s.feedback_premod === "1" ? "checked" : ""}></label>
+        <div class="row2">${num("feedback_per_player", "Max open inbrengen per speler (0 = vrij)")}</div>
+        <div class="list" style="margin-top:10px">${feedback || `<p class="muted">Niets binnen.</p>`}</div>
+        <button class="btn teal big" data-act="save-feedback-settings">Inbreng-instellingen opslaan</button>`)}
       ${adm("danger", "🧨 Gevaarlijke knoppen", `
         <div class="list">
           <button class="btn big" data-act="reshuffle">🔀 Alle kaarten opnieuw schudden</button>
@@ -834,6 +929,38 @@
       return;
     }
 
+    if (act === "fb-kind") {
+      fbDraft.kind = el.dataset.kind;
+      render();
+      return;
+    }
+    if (act === "fb-send") {
+      const ta = $("#fbText");
+      const text = (ta ? ta.value : "").trim();
+      if (text.length < 3) return toast("Typ iets bruikbaars", "err");
+      el.disabled = true;
+      try {
+        const body = { kind: fbDraft.kind, text };
+        if (fbDraft.kind === "prize") body.line_key = $("#fbLine").value;
+        const r = await api("POST", "/api/feedback", body);
+        fbDraft.text = ""; LS.set("fbDraft", fbDraft);
+        toast(r.status === "pending" ? "💡 In de wacht tot de admin hem vrijgeeft" : "💡 Je inbreng staat live", "ok");
+        scheduleLoad(0);
+      } catch (err) { toast(err.message, "err"); el.disabled = false; }
+      return;
+    }
+    if (act === "fb-withdraw") {
+      if (!confirm("Deze inbreng intrekken?")) return;
+      try { await api("DELETE", `/api/feedback/${id}`); toast("Ingetrokken"); scheduleLoad(0); }
+      catch (err) { toast(err.message, "err"); }
+      return;
+    }
+    if (act === "fb-vote") {
+      try { await api("POST", `/api/feedback/${id}/vote`, { vote: Number(el.dataset.vote) }); scheduleLoad(0); }
+      catch (err) { toast(err.message, "err"); }
+      return;
+    }
+
     // admin actions
     if (act === "announce") {
       const text = $("#announceText").value.trim();
@@ -907,6 +1034,22 @@
     if (act === "revoke") {
       if (!confirm("Deze claim terugdraaien?")) return;
       return adminAction(() => api("POST", `/api/admin/claims/${id}/revoke`), "Teruggedraaid");
+    }
+    if (act === "save-feedback-settings") {
+      return adminAction(() => api("POST", "/api/admin/settings", collectSettings(
+        ["feedback_open", "feedback_premod", "feedback_per_player"])), "Inbreng-instellingen opgeslagen");
+    }
+    if (act === "fb-approve") return adminAction(() => api("POST", `/api/admin/feedback/${id}/approve`), "Vrijgegeven 💡");
+    if (act === "fb-reject") return adminAction(() => api("POST", `/api/admin/feedback/${id}/reject`), "Afgekeurd");
+    if (act === "fb-reopen") return adminAction(() => api("POST", `/api/admin/feedback/${id}/reopen`), "Terug in de wacht");
+    if (act === "fb-adopt") {
+      const p = (adminData.proposals || []).find((x) => String(x.id) === String(id));
+      const what = p && p.kind === "prize" ? `deze prijs (${p.line || "Elke lijn"})` : "dit vakje";
+      if (!confirm(`${what} aannemen?${p && p.kind === "prize" ? " De prijs op die lijn wordt overschreven." : " Het vakje gaat in het spel, claims blijven staan."}`)) return;
+      return adminAction(async () => {
+        const r = await api("POST", `/api/admin/feedback/${id}/adopt`);
+        if (r.grid && r.grid.applied === false && r.grid.reason) toast(`⚠️ ${r.grid.reason}`, "err");
+      }, "Aangenomen 🛠");
     }
     if (act === "reshuffle") {
       if (!confirm("Alle kaarten opnieuw schudden? Geclaimde vakjes blijven op hun plek.")) return;

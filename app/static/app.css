@@ -323,3 +323,25 @@ details.adm .inner { padding: 0 16px 16px; }
   .hero { padding-left: max(20px, calc(50% - 260px)); padding-right: max(20px, calc(50% - 260px)); }
   .hero .crest { width: 112px; }
 }
+
+/* ---------------------------------------------------- Inbreng: vakjes en prijzen opperen */
+.fb-form { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); }
+.fb-form textarea { min-height: 66px; margin-top: 6px; }
+.fb-row2 { display: grid; gap: 8px; margin-bottom: 8px; }
+.seg { display: flex; gap: 8px; }
+.seg button { flex: 1; padding: 9px 6px; border: 1.5px solid var(--line); background: var(--paper); color: var(--text); border-radius: 10px; font-weight: 700; font-size: 14px; cursor: pointer; }
+.seg button.on { background: var(--red); border-color: var(--red); color: var(--cream); }
+.fb-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.fb-foot .btn { min-height: 42px; }
+.fb-quiet { font-size: 12px; color: var(--muted); }
+.fb-list { display: grid; gap: 8px; margin-top: 10px; }
+.fb-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: var(--radius); }
+.fb-item .txt { flex: 1; font-size: 15px; }
+.fb-item .who { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.fb-item.st-pending { border-left-color: var(--amber); }
+.fb-item.st-adopted, .fb-item.st-rejected { opacity: .62; }
+.fb-votes { display: flex; align-items: center; gap: 4px; }
+.fb-votes button { border: 1.5px solid var(--line); background: var(--paper); border-radius: 8px; padding: 6px 9px; font-size: 14px; cursor: pointer; }
+.fb-votes button.on { background: var(--gold-soft); border-color: var(--gold); }
+.fb-votes .score { min-width: 2.4em; text-align: center; font-weight: 800; font-size: 13px; }
+.notice { padding: 10px 12px; border-radius: 10px; background: var(--gold-soft); color: #7a5d1f; border: 1px solid var(--gold-hi); font-size: 13px; margin-bottom: 10px; }

@@ -5,7 +5,10 @@ from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "./data")).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
+BACKUP_DIR = DATA_DIR / "backups"
 DB_PATH = DATA_DIR / "bingo.db"
+# Hoeveel start-snapshots van de SQLite-DB we bewaren (0 = geen snapshots maken).
+DB_SNAPSHOT_KEEP = int(os.environ.get("DB_SNAPSHOT_KEEP", "5"))
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme123")
