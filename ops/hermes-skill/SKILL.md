@@ -172,6 +172,10 @@ in a row keep `oudste account 2026-11-16T09:06:56`).
 `POST /applications/{uuid}/storages` is 404 on Coolify beta.462.
 Verify with `deploy.py logs`: the startup line `data: /data/bingo.db — N accounts, …, oudste account <ts>`
 must show the *same* timestamp after two deploys; a fresh timestamp means the DB was recreated.
+Since 2026-11-17 every start also writes a rolling snapshot to `/data/backups/bingo-<timestamp>.db`
+(5 kept, `DB_SNAPSHOT_KEEP=0` disables it, a failed snapshot never blocks startup). That is the undo button
+for a bad migration when you have no shell on the host: copy it over `/data/bingo.db` and remove the
+`-wal`/`-shm` files. The startup log line `db-snapshot: /data/backups/…` confirms it ran.
 
 ```bash
 python3 ops/coolify/deploy.py show|deploy|wait|logs|envs|domains   # token: ~/.hermes/mcp-tokens/coolify.env (600)
