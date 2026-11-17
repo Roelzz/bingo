@@ -1,6 +1,6 @@
 # Speerpunt Bingo
 
-Bingo als drankspel voor jaarclub Speerpunt (Utrecht, 09). Telefoonvriendelijk (PWA), realtime, met getuigen, vetorecht, jokers, fotobewijs en prijzen per lijn.
+Bingo als drankspel voor jaarclub Speerpunt (Utrecht, 09). Telefoonvriendelijk (PWA), realtime, met getuigen, vetorecht, fotobewijs en prijzen per lijn. Iedereen heeft standaard **geen joker**: die is niet langer ieders recht, maar iets dat je los verdient (of dat de admin los zet).
 
 Stack: Python 3.12 met uv, FastAPI, SQLite, Server Sent Events, Web Push. Geen build-stap voor de frontend.
 
@@ -15,7 +15,7 @@ Stack: Python 3.12 met uv, FastAPI, SQLite, Server Sent Events, Web Push. Geen b
 - **Lijnen**: horizontale rijen en diagonalen (kolommen kun je aanzetten). Bij een 3×4 raster zijn er 4 diagonalen van 3 vakjes.
 - **Prijzen**: per lijn, en iedereen die een lijn haalt wint die prijs. Volle kaart is de superprijs.
 - **Album**: alle bewijsfoto's van het weekend. Foto's worden op de telefoon verkleind en op de server ontdaan van metadata (ook GPS).
-- **Inbreng** (tab **Inbreng**): iedereen mag een **vakje** of een **prijs** opperen. Met voormoderatie (aan) ligt het eerst bij de admin; na vrijgeven staat het open op de feed en kan de club 👍/👎 stemmen. De admin kiest **Aannemen**: dan wordt het een echt vakje (kaarten worden aangevuld, bestaande claims blijven staan) of de prijs op die lijn. Een gewonnen lijn onthoudt de prijs van dat moment, dus later schaven aan een prijs herschrijft de win niet.
+- **Inbreng** (tab **Inbreng**): iedereen mag een **vakje** of een **prijs** opperen. Met voormoderatie (aan) ligt het eerst bij de admin; na vrijgeven staat het open op de feed en kan de club 👍/👎 stemmen. De admin kiest **Aannemen**: dan wordt het een echt vakje (kaarten worden aangevuld, bestaande claims blijven staan) of de prijs op die lijn. Een gewonnen lijn onthoudt de prijs van dat moment, dus later schaven aan een prijs herschrijft de win niet. Er is **geen limiet** aan wat iemand inbrengt (`feedback_per_player` = 0; de admin mag er wel een plafond zetten).
 
 ## Lokaal draaien met uv
 

@@ -178,15 +178,21 @@ def _detail(result) -> str:
 
 # ------------------------------------------------------------------ helpers
 
+TRUE_WORDS = ("true", "on", "ja", "aan", "yes")
+FALSE_WORDS = ("false", "off", "nee", "uit", "no")
+
+
 def typed(value: str):
+    """`key=waarde` uit de CLI naar JSON. Cijfers blijven cijfers: `jokers_per_player=0` is 0,
+    niet `False` (dat door de API wel als 0 gelezen wordt, maar de echo liegt dan)."""
     v = value.strip()
-    low = v.lower()
-    if low in ("true", "on", "ja", "aan", "1", "yes"):
-        return True
-    if low in ("false", "off", "nee", "uit", "0", "no"):
-        return False
-    if v.isdigit():
+    if v.lstrip("-").isdigit():
         return int(v)
+    low = v.lower()
+    if low in TRUE_WORDS:
+        return True
+    if low in FALSE_WORDS:
+        return False
     return v
 
 

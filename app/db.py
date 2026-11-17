@@ -128,13 +128,13 @@ DEFAULT_SETTINGS = {
     "line_diagonals": "1",
     "default_line_prize": "Een rondje van de rest",
     "full_card_prize": "Superprijs: de hele groep trakteert",
-    "jokers_per_player": "1",
+    "jokers_per_player": "0",    # jokers zijn standaard uit; die verdien je individueel (hier zet de admin ze weer aan)
     "veto_threshold": "2",
     "witness_limit": "0",
     "frozen": "0",
     "feedback_open": "1",          # inbreng-inbox aan/uit
     "feedback_premod": "1",        # eerst admin, na goedkeuring pas voor iedereen
-    "feedback_per_player": "2",    # max eigen inbrengen die open staan (0 = onbeperkt)
+    "feedback_per_player": "0",    # max eigen inbrengen die open staan (0 = onbeperkt)
 }
 
 SEED_ITEMS = [

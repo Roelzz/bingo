@@ -90,7 +90,8 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   lines, leaderboard, feed, witness requests, `vapid_public_key`.
 - Public `/api/state` settings use **`cols`/`rows`** (ints), while admin settings use
   **`grid_cols`/`grid_rows`** (strings). Don't mix them up.
-- Settings keys + ranges: `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5,
+- Settings keys + ranges: `grid_cols` 2–6, `grid_rows` 2–8, `jokers_per_player` 0–5 (standaard **0**: niemand
+  heeft meer een joker, die moet je verdienen of los krijgen),
   `veto_threshold` 0–20, `witness_limit` 0–50; text: `title`, `kicker`, `subtitle`, `footer`,
   `default_line_prize`, `full_card_prize`; bool: `line_rows`, `line_cols`, `line_diagonals`,
   `grid_auto`, `frozen`. Item text ≤160 chars, prize ≤200, announce ≤300, invites 1–30/run.
@@ -104,7 +105,8 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   `grid_auto` off until re-enabled.
 - Claims: a player claim needs a witness (not themselves, capped by `witness_limit`);
   `confirm`/`reject` only work for the witness — the admin can revoke with `revoke`.
-  `joker` claims are auto-confirmed and cost one of `jokers_per_player`. A claim gains vetoes
+  `joker` claims are auto-confirmed and cost one of `jokers_per_player` (standaard 0: zonder dat de admin
+  die omzet is er geen joker in te zetten). A claim gains vetoes
   from other players; at `veto_threshold` it becomes `vetoed` (penalty for the claimant).
 - Deleting an item soft-deletes it (`active=0`) and revokes its open claims — history stays.
 - Inbreng (proposals): `proposals.kind` is `item` or `prize`, `line_key` only for prizes
@@ -112,7 +114,8 @@ Global flags: `--url`, `--email`, `--password`, `--json` (raw JSON), `--yes` (de
   `visible` (iedereen, mag stemmen 👍👎), `adopted`, `rejected`. Met `feedback_premod=on`
   (default) komt een spelers-inbreng in de wacht te liggen: géén feed-event en géén SSE-refresh
   tot `feedback-approve`. Een admin-inbreng is altijd direct `visible` (handig als poll).
-  Max open inbrengen per speler: `feedback_per_player` (0 = vrij), plus 8 pogingen / 5 min.
+  Max open inbrengen per speler: `feedback_per_player` (standaard **0 = onbeperkt**), plus de vaste
+  spamwacht van 8 pogingen / 5 min per speler.
 - `adopt` is de knop die ertoe doet: `kind=item` voegt een echt vakje toe (kaarten worden alleen
   aangevuld, claims blijven staan, autoset doet het rooster meebewegen als dat veilig is),
   `kind=prize` overschrijft de prijs op die lijn (of `full_card_prize`/`default_line_prize`).

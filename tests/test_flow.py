@@ -231,6 +231,10 @@ def test_joker_and_full_card(clients):
     kees = players["Kees"]
     s, pid = ids(kees)
     cells = s["card"]
+    # standaard heeft niemand een joker meer; die zet de admin aan (of verdient iemand ooit)
+    assert kees.get("/api/state").json()["me"]["jokers_left"] == 0
+    assert kees.post("/api/claims", json={"item_id": cells[0]["item_id"], "joker": True}, headers=H).status_code == 409
+    admin.post("/api/admin/settings", json={"jokers_per_player": 1}, headers=H)
     r = kees.post("/api/claims", json={"item_id": cells[0]["item_id"], "joker": True}, headers=H).json()
     assert r["status"] == "confirmed"
     assert kees.post("/api/claims", json={"item_id": cells[1]["item_id"], "joker": True}, headers=H).status_code == 409
@@ -240,6 +244,7 @@ def test_joker_and_full_card(clients):
         admin.post(f"/api/claims/{req['claim_id']}/confirm", headers=H)
     s = kees.get("/api/state").json()
     assert s["full_card_won"] is True
+    admin.post("/api/admin/settings", json={"jokers_per_player": 0}, headers=H)  # terug naar de standaard: geen jokers
     assert all(l["won"] for l in s["lines"])  # 4 rows + 4 diagonals
     assert len(s["lines"]) == 8
     top = s["leaderboard"][0]
